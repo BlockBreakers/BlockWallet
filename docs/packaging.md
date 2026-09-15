@@ -23,10 +23,10 @@ PureOS **Crimson** satisfies the GTK side. Measured on a Librem 5 running Crimso
 | --- | --- | --- |
 | GTK4 | 4.8.3 | 4.6+ |
 | libadwaita | 1.2.2 | 1.2+ |
-| rustc | **1.63** | **1.85** |
+| rustc | **1.63** | **1.91** |
 
 The Rust version is the blocker, not the GTK stack. A native or `.deb` build on Crimson needs
-a rustup toolchain; `apt install rustc cargo` is 22 minor versions short.
+a rustup toolchain; `apt install rustc cargo` is 28 minor versions short.
 
 Note also that libadwaita is exactly 1.2.2, i.e. the floor. The `v1_2` feature pin in
 `Cargo.toml` is what keeps the native path buildable there, and raising it would break this
@@ -275,8 +275,8 @@ Measured against the live `pureos` remote
 
 `sm.puri.Sdk` 44 is built on freedesktop 22.08, so the only Rust toolchain available to it is
 that 22.08 extension, which is stable Rust as of May 2023: approximately 1.69. This crate
-declares `rust-version = "1.85"` in `Cargo.toml`, and the dependency tree (alloy 1.x, bdk 1.x)
-requires it. There is roughly a two-year gap, not a marginal one.
+declares `rust-version = "1.91"` in `Cargo.toml`, and the dependency tree (alloy 1.x, bdk 1.x,
+monero-oxide) requires it. There is roughly a two-year gap, not a marginal one.
 
 Note that `master` is no newer than 44; both were built the same day. There is no newer branch
 to target.
@@ -321,7 +321,7 @@ build's window tagged with the release ID and showing the wrong icon in Phosh.
 Files under `packaging/debian/` are a starting point, not a complete source package.
 
 Note the toolchain: `rustc` and `cargo` are deliberately **not** in the apt line below, because
-on Crimson they are 1.63 against this crate's 1.85 floor (see Preflight). Install a toolchain
+on Crimson they are 1.63 against this crate's 1.91 floor (see Preflight). Install a toolchain
 from [rustup](https://rustup.rs) instead. The GTK and libadwaita dev packages are fine.
 
 ```sh

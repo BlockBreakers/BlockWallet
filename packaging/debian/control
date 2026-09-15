@@ -4,7 +4,7 @@ Priority: optional
 Maintainer: Block Breakers <wallet@blockbreakers.org>
 Build-Depends: debhelper-compat (= 13),
                cargo,
-               rustc (>= 1.85),
+               rustc (>= 1.91),
                pkg-config,
                libgtk-4-dev,
                libadwaita-1-dev (>= 1.2),

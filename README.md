@@ -52,10 +52,12 @@ what the distribution ships and behaves the same on every PureOS release.
 | Byzantium | Debian bullseye | none | not possible |
 | **Crimson** | Debian bookworm | GTK 4.8.3, libadwaita 1.2.2 | possible, but see [From source](#from-source) |
 
-Verified on a Librem 5 running **PureOS 11 (Crimson)**, kernel 6.12.0-1-librem5: the aarch64
-bundle installs, appears in the Phosh app grid, and runs with no errors on stderr and a flat
-57 MB resident. Note that this exercises the runtime's GTK 4.22, not Crimson's own 4.8.3.
-Those are separate code paths, and only the Flatpak one has been run on hardware.
+The v0.2.0 bundle was verified on a Librem 5 running **PureOS 11 (Crimson)**, kernel
+6.12.0-1-librem5: it installs, appears in the Phosh app grid, and runs with no errors on
+stderr and a flat 57 MB resident. The v0.3.0 aarch64 bundle was built the same way, from the
+tag with no network, but has not been on the phone yet; its x86_64 sibling was installed and
+launched on a desktop. Note that the bundle exercises the runtime's GTK 4.22, not Crimson's
+own 4.8.3. Those are separate code paths, and only the Flatpak one has been run on hardware.
 
 **1. Download the bundle for your architecture** from the
 [latest release](https://github.com/BlockBreakersHQ/BlockWallet/releases/latest), together
@@ -103,7 +105,7 @@ Building the bundle yourself is covered in [docs/packaging.md](docs/packaging.md
 
 ### From source
 
-Needs Rust 1.85+, GTK 4.6+, and libadwaita 1.2+.
+Needs Rust 1.91+, GTK 4.6+, and libadwaita 1.2+.
 
 ```sh
 # Debian bookworm / trixie, PureOS Crimson
@@ -114,16 +116,17 @@ cargo test
 ```
 
 **On PureOS Crimson the distribution's Rust is too old.** Crimson's `rustc` is 1.63 and this
-crate needs 1.85, so install a toolchain from [rustup](https://rustup.rs) rather than
-`apt install rustc cargo`. The GTK side is fine: Crimson's GTK 4.8.3 and libadwaita 1.2.2
-both clear the floor, and `libgtk-4-dev` / `libadwaita-1-dev` are in its repositories.
+crate needs 1.91 (the floor is alloy's; the Monero crates need 1.89), so install a toolchain
+from [rustup](https://rustup.rs) rather than `apt install rustc cargo`. The GTK side is fine:
+Crimson's GTK 4.8.3 and libadwaita 1.2.2 both clear the floor, and `libgtk-4-dev` /
+`libadwaita-1-dev` are in its repositories.
 
 That libadwaita floor is deliberate. `Cargo.toml` pins the `v1_2` feature and
 `ui::add_switch_row` hand-builds what `AdwSwitchRow` would give, precisely so this still
 compiles against the 1.2.2 that Crimson ships. Raising it to `v1_4` would break the native
 build on the device this app targets.
 
-Building on the phone itself is slow: 4 cores and 3 GB of RAM against roughly 580 crates.
+Building on the phone itself is slow: 4 cores and 3 GB of RAM against roughly 600 crates.
 Prefer building on a faster machine and copying the result over.
 
 Windows (MSYS2 mingw64 + GNU rustc). Plain `cargo run` uses MSVC and has no
@@ -256,7 +259,8 @@ the list to bring them back for a visit. A balance that is still syncing, or tha
 fetched because a node is unreachable, is never hidden: both read as zero, and treating either
 as empty would hide something you own at the exact moment you cannot check.
 
-Import from a mnemonic, a WIF, a raw private key, or an existing encrypted `.dic`.
+Import from a mnemonic, a WIF, a raw private key, a Monero spend key, or an existing
+encrypted `.dic`.
 
 ## Swaps
 
@@ -439,9 +443,10 @@ User files follow the XDG Base Directory spec. Override the root with `BLOCKWALL
 
 Progress and remaining work: [docs/ROADMAP.md](docs/ROADMAP.md).
 
-`v0.1.0` is tagged, and release builds are produced for both `aarch64` (the Librem 5) and
-`x86_64` (desktop). Work since that tag is unreleased and is being re-tested against the
-expanded checklist.
+Every release is a pushed tag with a GitHub release behind it: `aarch64` (the Librem 5) and
+`x86_64` (desktop) Flatpak bundles, the two PureOS Store binaries, and a `SHA256SUMS`. The
+current one is `v0.3.0`; the device checklist is re-run against each release as hardware
+time allows, and the status at the top of this file says which have had it.
 
 ## License
 
