@@ -9,6 +9,7 @@ use crate::configuration::endpoint;
 use crate::configuration::wallet_store::CustomTokenRecord;
 use crate::currencies::eth_chain;
 use crate::currencies::sol_chain;
+use crate::currencies::xmr_chain;
 use crate::views::ui;
 use crate::views::{login, stack};
 
@@ -222,7 +223,7 @@ fn network_settings(page: &adw::PreferencesPage, app_settings: Arc<Mutex<Applica
     let testnet = ui::add_switch_row(
         &networks,
         "Use test networks",
-        "Bitcoin testnet, Ethereum Sepolia, Solana devnet, Litecoin testnet",
+        "Bitcoin testnet, Ethereum Sepolia, Solana devnet, Litecoin testnet, Monero stagenet",
         app_settings.lock().unwrap().is_test_mode(),
     );
     page.add(&networks);
@@ -335,6 +336,46 @@ fn network_settings(page: &adw::PreferencesPage, app_settings: Arc<Mutex<Applica
     ltc_group.add(&litecoin_node);
     ltc_group.add(&ltc_incorrect_format);
     page.add(&ltc_group);
+
+    // ---- Monero ----
+    let xmr_group = ui::group_with_description(
+        "Monero",
+        "Monero has no address lookup: the wallet downloads blocks and scans them itself, so a node learns nothing about your account from a sync.",
+    );
+    let xmr_network = ui::combo_row("Network", &["Mainnet", "Stagenet"]);
+    if xmr_chain::is_testnet(xmr_chain::parse_network(&app_settings.lock().unwrap().xmr_network)) {
+        xmr_network.set_selected(1);
+    }
+    let monero_node = adw::EntryRow::builder().title("Daemon RPC URL").build();
+    monero_node.set_text(&app_settings.lock().unwrap().xmr_node);
+    let xmr_incorrect_format = ui::error_label(
+        "Monero node must be an https daemon URL, or empty for the public defaults. Plaintext http:// is only accepted for a node on this device.",
+    );
+    // One height for every Monero account, applied on save and only when it changes:
+    // moving it drops the scan cache so the next sync starts over from there.
+    let xmr_restore_height = adw::EntryRow::builder().title("Restore height").build();
+    {
+        let settings = app_settings.lock().unwrap();
+        if let Some(height) = settings.xmr_wallets.first().and_then(|w| w.restore_height) {
+            xmr_restore_height.set_text(&height.to_string());
+        }
+    }
+    let xmr_restore_hint = adw::ActionRow::builder()
+        .title("Scanning")
+        .subtitle("A wallet created here scans from its own creation. A restored phrase or imported key scans the last month unless a block height is given above. Lowering it rescans from there.")
+        .build();
+    xmr_restore_hint.add_css_class("property");
+    let xmr_bad_height = ui::error_label("Restore height must be a block number, or empty.");
+    // Applied only when edited: the row shows the first account's height, and a Save that
+    // never touched it must not push that value onto every other account and rescan them.
+    let xmr_height_as_shown = xmr_restore_height.text().to_string();
+    xmr_group.add(&xmr_network);
+    xmr_group.add(&monero_node);
+    xmr_group.add(&xmr_incorrect_format);
+    xmr_group.add(&xmr_restore_height);
+    xmr_group.add(&xmr_restore_hint);
+    xmr_group.add(&xmr_bad_height);
+    page.add(&xmr_group);
 
     let save_group = adw::PreferencesGroup::new();
     let save_button = ui::primary_button("Save network settings");
@@ -461,6 +502,8 @@ fn network_settings(page: &adw::PreferencesPage, app_settings: Arc<Mutex<Applica
         btc_incorrect_format.set_visible(false);
         sol_incorrect_format.set_visible(false);
         ltc_incorrect_format.set_visible(false);
+        xmr_incorrect_format.set_visible(false);
+        xmr_bad_height.set_visible(false);
         thornode_incorrect_format.set_visible(false);
         let mut all_valid = true;
         if !etherscan_api_key.text().is_empty() {
@@ -479,6 +522,7 @@ fn network_settings(page: &adw::PreferencesPage, app_settings: Arc<Mutex<Applica
             eth_network.set_selected(1);
             sol_network.set_selected(1);
             ltc_network.set_selected(1);
+            xmr_network.set_selected(1);
         } else {
             let selected_eth = ETH_NETWORKS
                 .get(eth_network.selected() as usize)
@@ -499,6 +543,11 @@ fn network_settings(page: &adw::PreferencesPage, app_settings: Arc<Mutex<Applica
                 .get(ltc_network.selected() as usize)
                 .unwrap_or(&"litecoin");
             app_settings.lock().unwrap().apply_ltc_network(selected_ltc);
+            let xmr_networks = ["monero", "stagenet"];
+            let selected_xmr = xmr_networks
+                .get(xmr_network.selected() as usize)
+                .unwrap_or(&"monero");
+            app_settings.lock().unwrap().apply_xmr_network(selected_xmr);
         }
         let btc_text = btc_node.text().to_string();
         if endpoint::validate(&btc_text, true).is_ok() {
@@ -527,6 +576,45 @@ fn network_settings(page: &adw::PreferencesPage, app_settings: Arc<Mutex<Applica
         } else {
             ltc_incorrect_format.set_visible(true);
             all_valid = false;
+        }
+        let xmr_text = monero_node.text().to_string();
+        if endpoint::validate(&xmr_text, false).is_ok() {
+            app_settings.lock().unwrap().xmr_node = xmr_text;
+        } else {
+            xmr_incorrect_format.set_visible(true);
+            all_valid = false;
+        }
+        let height_text = xmr_restore_height.text().to_string();
+        let height_edited = height_text.trim() != xmr_height_as_shown.trim();
+        let height = if height_text.trim().is_empty() {
+            Ok(None)
+        } else {
+            height_text.trim().replace(',', "").parse::<u64>().map(Some)
+        };
+        match height {
+            _ if !height_edited => {}
+            Ok(height) => {
+                let mut settings = app_settings.lock().unwrap();
+                let network = settings.xmr_network.clone();
+                for wallet in &mut settings.xmr_wallets {
+                    if wallet.restore_height == height {
+                        continue;
+                    }
+                    wallet.restore_height = height;
+                    // Forget what was scanned so the next sync starts from the new height.
+                    // Raising it is allowed too: that is how a user who set it too low stops a
+                    // needless scan of years they know were empty.
+                    if let (Some(spend), Some(view), Some(address)) =
+                        (&wallet.private_key, &wallet.private_view_key, &wallet.address)
+                    {
+                        let _ = xmr_chain::reset_scan_cache(spend, view, address, &network);
+                    }
+                }
+            }
+            Err(_) => {
+                xmr_bad_height.set_visible(true);
+                all_valid = false;
+            }
         }
         if !infura_key.text().is_empty() {
             app_settings.lock().unwrap().infura_key = infura_key.text().to_string();

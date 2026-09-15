@@ -9,6 +9,7 @@ pub fn gecko_id(symbol: &str) -> Option<&'static str> {
         "ETH" => Some("ethereum"),
         "SOL" => Some("solana"),
         "LTC" => Some("litecoin"),
+        "XMR" => Some("monero"),
         "USDC" => Some("usd-coin"),
         "USDT" => Some("tether"),
         "DAI" => Some("dai"),

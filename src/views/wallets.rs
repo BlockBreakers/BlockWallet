@@ -16,6 +16,7 @@ use crate::currencies::ltc;
 use crate::currencies::ltc::LitecoinWallet;
 use crate::currencies::sol;
 use crate::currencies::sol::SolanaWallet;
+use crate::currencies::xmr::MoneroWallet;
 use crate::views::ui;
 
 pub fn wallet_view(app_settings: Arc<Mutex<ApplicationSettings>>) -> (gtk::Box, Arc<Mutex<ApplicationSettings>>) {
@@ -23,6 +24,7 @@ pub fn wallet_view(app_settings: Arc<Mutex<ApplicationSettings>>) -> (gtk::Box, 
     let eth_wallets = app_settings.lock().unwrap().eth_wallets.clone();
     let sol_wallets = app_settings.lock().unwrap().sol_wallets.clone();
     let ltc_wallets = app_settings.lock().unwrap().ltc_wallets.clone();
+    let xmr_wallets = app_settings.lock().unwrap().xmr_wallets.clone();
 
     let scrollable_box = ui::page_body(12);
 
@@ -30,13 +32,14 @@ pub fn wallet_view(app_settings: Arc<Mutex<ApplicationSettings>>) -> (gtk::Box, 
         "One recovery phrase backs every account here. Addresses are safe to share; the phrase never is.",
     ));
 
-    // All four chains are shown at once in titled groups. The old screen hid every
+    // All five chains are shown at once in titled groups. The old screen hid every
     // account behind a toggle button per chain, so a fresh wallet opened on four
     // identical grey buttons and no information at all.
     let btc_group = chain_group("btc", &btc_wallets.len().to_string());
     let eth_group = chain_group("eth", &eth_wallets.len().to_string());
     let sol_group = chain_group("sol", &sol_wallets.len().to_string());
     let ltc_group = chain_group("ltc", &ltc_wallets.len().to_string());
+    let xmr_group = chain_group("xmr", &xmr_wallets.len().to_string());
 
     for wallet in &btc_wallets {
         add_btc_wallet(&btc_group, wallet, app_settings.clone());
@@ -50,11 +53,15 @@ pub fn wallet_view(app_settings: Arc<Mutex<ApplicationSettings>>) -> (gtk::Box, 
     for wallet in &ltc_wallets {
         add_ltc_wallet(&ltc_group, wallet, app_settings.clone());
     }
+    for wallet in &xmr_wallets {
+        add_xmr_wallet(&xmr_group, wallet, app_settings.clone());
+    }
 
     scrollable_box.append(&btc_group);
     scrollable_box.append(&eth_group);
     scrollable_box.append(&sol_group);
     scrollable_box.append(&ltc_group);
+    scrollable_box.append(&xmr_group);
 
     let add_group = adw::PreferencesGroup::new();
     let add_wallet_button = ui::icon_button("Add account", "list-add-symbolic");
@@ -70,6 +77,7 @@ pub fn wallet_view(app_settings: Arc<Mutex<ApplicationSettings>>) -> (gtk::Box, 
         Arc::new(Mutex::new(eth_group.clone())),
         Arc::new(Mutex::new(sol_group.clone())),
         Arc::new(Mutex::new(ltc_group.clone())),
+        Arc::new(Mutex::new(xmr_group.clone())),
         Arc::new(Mutex::new(scrollable_container.clone())),
     );
     wallet_box.append(&scrollable_container);
@@ -163,6 +171,7 @@ fn chain_symbol(chain: &str) -> &'static str {
         "btc" => "BTC",
         "sol" => "SOL",
         "ltc" => "LTC",
+        "xmr" => "XMR",
         _ => "ETH",
     }
 }
@@ -378,6 +387,21 @@ fn add_ltc_wallet(
     );
 }
 
+fn add_xmr_wallet(
+    xmr_box: &adw::PreferencesGroup,
+    xmrw: &MoneroWallet,
+    app_settings: Arc<Mutex<ApplicationSettings>>,
+) {
+    append_account_card(
+        xmr_box,
+        xmrw.wallet_name.as_deref(),
+        xmrw.address.as_deref(),
+        "xmr",
+        xmr_qr_box(xmrw),
+        app_settings,
+    );
+}
+
 pub fn btc_qr_box(btcw: &BitcoinWallet) -> gtk::Box {
     qr_box_from_texture(btcw.generate_qr_address().ok())
 }
@@ -392,6 +416,10 @@ pub fn sol_qr_box(solw: &SolanaWallet) -> gtk::Box {
 
 pub fn ltc_qr_box(ltcw: &LitecoinWallet) -> gtk::Box {
     qr_box_from_texture(ltcw.generate_qr_address().ok())
+}
+
+pub fn xmr_qr_box(xmrw: &MoneroWallet) -> gtk::Box {
+    qr_box_from_texture(xmrw.generate_qr_address().ok())
 }
 
 fn qr_box_from_texture(texture: Option<gtk::gdk::Texture>) -> gtk::Box {
@@ -422,6 +450,7 @@ fn new_wallet_box(
     eth_box: Arc<Mutex<adw::PreferencesGroup>>,
     sol_box: Arc<Mutex<adw::PreferencesGroup>>,
     ltc_box: Arc<Mutex<adw::PreferencesGroup>>,
+    xmr_box: Arc<Mutex<adw::PreferencesGroup>>,
     scrollable_container: Arc<Mutex<gtk::ScrolledWindow>>,
 ) -> gtk::Box {
     let content = ui::page_body(14);
@@ -433,7 +462,7 @@ fn new_wallet_box(
         "Add another account from this recovery phrase, or import an existing key. The phrase is never shown here.",
     ));
 
-    let tokens = ["Bitcoin", "Ethereum", "Solana", "Litecoin"];
+    let tokens = ["Bitcoin", "Ethereum", "Solana", "Litecoin", "Monero"];
 
     // ---- derive from the existing seed ----
     let create_group = ui::group_with_description(
@@ -458,9 +487,21 @@ fn new_wallet_box(
     let import_token_selector = ui::combo_row("Chain", &tokens);
     let import_wallet_name = ui::entry_row("Account name");
     let import_secret = ui::password_row("WIF, private key or phrase");
+    // Monero only. A Monero account has to scan the chain for its own payments, and a key
+    // made elsewhere gives no hint where to start; without this it scans the last month
+    // and Settings has to be visited for anything older.
+    let import_restore_height = ui::entry_row("Restore height (block the account was created at)");
+    import_restore_height.set_visible(false);
     import_group.add(&import_token_selector);
     import_group.add(&import_wallet_name);
     import_group.add(&import_secret);
+    import_group.add(&import_restore_height);
+    import_token_selector.connect_selected_notify(clone!(
+        #[weak] import_restore_height,
+        move |selector| {
+            import_restore_height.set_visible(selector.selected() == 4);
+        }
+    ));
     let import_wallet_button = ui::button("Import account");
     import_wallet_button.add_css_class("pill-button");
     import_group.add(&import_wallet_button);
@@ -512,6 +553,11 @@ fn new_wallet_box(
                 create_error.set_visible(true);
                 return;
             }
+            if token_selector.selected() == 4 {
+                create_error.set_label("This seed already has a Monero account. Import a spend key to add a different one.");
+                create_error.set_visible(true);
+                return;
+            }
             if token_selector.selected() == 2 {
                 // Extra Solana accounts increment the hardened account index (m/44'/501'/n'/0'),
                 // matching Phantom/Solflare's convention, since ed25519 SLIP-10 requires every
@@ -559,10 +605,12 @@ fn new_wallet_box(
         #[strong] eth_box,
         #[strong] sol_box,
         #[strong] ltc_box,
+        #[strong] xmr_box,
         #[strong] scrollable_container,
         #[weak] import_token_selector,
         #[weak] import_wallet_name,
         #[weak] import_secret,
+        #[weak] import_restore_height,
         #[weak] import_error,
         #[weak] new_wallet_box,
         move |_| {
@@ -571,7 +619,55 @@ fn new_wallet_box(
             import_secret.set_text("");
             let name = import_wallet_name.text().to_string();
             let mut settings = app_settings.lock().unwrap();
-            if import_token_selector.selected() == 0 {
+            if import_token_selector.selected() == 4 {
+                let height_text = import_restore_height.text().to_string();
+                let restore_height = if height_text.trim().is_empty() {
+                    None
+                } else {
+                    match height_text.trim().replace(',', "").parse::<u64>() {
+                        Ok(height) => Some(height),
+                        Err(_) => {
+                            import_error.set_label("Restore height must be a block number, or empty to scan the last month.");
+                            import_error.set_visible(true);
+                            return;
+                        }
+                    }
+                };
+                let network = crate::currencies::xmr_chain::parse_network(&settings.xmr_network);
+                let word_count = secret.split_whitespace().count();
+                let mut xmrw = if word_count == 25 {
+                    // Monero's own seed format encodes the spend key in a 1626-word list this
+                    // wallet does not carry. The spend key itself is what that seed holds, and
+                    // every Monero wallet will show it.
+                    import_error.set_label("Monero 25-word seeds are not supported. Import the private spend key instead: any Monero wallet shows it under its keys.");
+                    import_error.set_visible(true);
+                    return;
+                } else if word_count > 1 {
+                    match MoneroWallet::from_mnemonic_on(&secret, "", network) {
+                        Ok(wallet) => wallet,
+                        Err(_) => {
+                            import_error.set_visible(true);
+                            return;
+                        }
+                    }
+                } else {
+                    match MoneroWallet::from_private_key_on(&secret, network, restore_height) {
+                        Ok(wallet) => wallet,
+                        Err(_) => {
+                            import_error.set_label("Could not import that key. A Monero spend key is 64 hex characters.");
+                            import_error.set_visible(true);
+                            return;
+                        }
+                    }
+                };
+                xmrw.restore_height = restore_height;
+                if !name.is_empty() {
+                    xmrw.set_wallet_name(name);
+                }
+                add_xmr_wallet(&xmr_box.lock().unwrap(), &xmrw, app_settings.clone());
+                settings.xmr_wallets.push(xmrw);
+                import_restore_height.set_text("");
+            } else if import_token_selector.selected() == 0 {
                 let mut btcw = match btc::generate_from_private_key(&secret) {
                     Some(wallet) => wallet,
                     None => {

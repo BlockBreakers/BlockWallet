@@ -7,6 +7,8 @@ use crate::currencies::eth::EthereumWallet;
 use crate::currencies::ltc::LitecoinWallet;
 use crate::currencies::ltc_chain::LtcNetwork;
 use crate::currencies::sol::SolanaWallet;
+use crate::currencies::xmr::MoneroWallet;
+use crate::currencies::xmr_chain::XmrNetwork;
 
 pub const BTC_PASSPHRASE: &str = "";
 pub const ETH_PATH: &str = "m/44'/60'/0'/0/0";
@@ -95,10 +97,27 @@ pub fn litecoin_from_seed_on(
     Ok(wallet)
 }
 
+pub fn monero_from_seed(mnemonic: &str, passphrase: &str, name: &str) -> Result<MoneroWallet, block_error::Error> {
+    monero_from_seed_on(mnemonic, passphrase, name, XmrNetwork::Mainnet)
+}
+
+pub fn monero_from_seed_on(
+    mnemonic: &str,
+    passphrase: &str,
+    name: &str,
+    network: XmrNetwork,
+) -> Result<MoneroWallet, block_error::Error> {
+    let mut wallet = MoneroWallet::from_mnemonic_on(mnemonic, passphrase, network)?;
+    if !name.is_empty() {
+        wallet.set_wallet_name(name.to_string());
+    }
+    Ok(wallet)
+}
+
 pub fn accounts_from_seed(
     mnemonic: &str,
     passphrase: &str,
-) -> Result<(BitcoinWallet, EthereumWallet, SolanaWallet, LitecoinWallet), block_error::Error> {
+) -> Result<(BitcoinWallet, EthereumWallet, SolanaWallet, LitecoinWallet, MoneroWallet), block_error::Error> {
     accounts_from_seed_on(mnemonic, passphrase, bdk_wallet::bitcoin::Network::Bitcoin)
 }
 
@@ -106,7 +125,7 @@ pub fn accounts_from_seed_on(
     mnemonic: &str,
     passphrase: &str,
     network: bdk_wallet::bitcoin::Network,
-) -> Result<(BitcoinWallet, EthereumWallet, SolanaWallet, LitecoinWallet), block_error::Error> {
+) -> Result<(BitcoinWallet, EthereumWallet, SolanaWallet, LitecoinWallet, MoneroWallet), block_error::Error> {
     let phrase = parse_mnemonic(mnemonic)?;
     let btc = bitcoin_from_seed_on(&phrase, passphrase, "Bitcoin", network)?;
     let eth = ethereum_from_seed(&phrase, ETH_PATH, passphrase, "Ethereum")?;
@@ -116,7 +135,12 @@ pub fn accounts_from_seed_on(
         _ => LtcNetwork::Testnet,
     };
     let ltc = litecoin_from_seed_on(&phrase, passphrase, "Litecoin", ltc_network)?;
-    Ok((btc, eth, sol, ltc))
+    let xmr_network = match network {
+        bdk_wallet::bitcoin::Network::Bitcoin => XmrNetwork::Mainnet,
+        _ => XmrNetwork::Stagenet,
+    };
+    let xmr = monero_from_seed_on(&phrase, passphrase, "Monero", xmr_network)?;
+    Ok((btc, eth, sol, ltc, xmr))
 }
 
 #[cfg(test)]
@@ -126,9 +150,11 @@ mod tests {
     const ABANDON: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
     #[test]
-    fn generated_seed_derives_btc_eth_sol_and_ltc() {
+    fn generated_seed_derives_btc_eth_sol_ltc_and_xmr() {
         let phrase = generate_mnemonic().unwrap();
-        let (btc, eth, sol, ltc) = accounts_from_seed(&phrase, BTC_PASSPHRASE).unwrap();
+        let (btc, eth, sol, ltc, xmr) = accounts_from_seed(&phrase, BTC_PASSPHRASE).unwrap();
+        assert_eq!(xmr.mnemonic.as_deref(), Some(phrase.as_str()));
+        assert!(xmr.address.as_ref().unwrap().starts_with('4'));
         assert_eq!(btc.mnemonic.as_deref(), Some(phrase.as_str()));
         assert_eq!(eth.mnemonic.as_deref(), Some(phrase.as_str()));
         assert_eq!(sol.mnemonic.as_deref(), Some(phrase.as_str()));
@@ -145,8 +171,13 @@ mod tests {
 
     #[test]
     fn known_mnemonic_is_shared_across_chains() {
-        let (btc, eth, sol, ltc) = accounts_from_seed(ABANDON, "").unwrap();
+        let (btc, eth, sol, ltc, xmr) = accounts_from_seed(ABANDON, "").unwrap();
         assert_eq!(btc.mnemonic.as_deref(), Some(ABANDON));
+        assert_eq!(xmr.mnemonic.as_deref(), Some(ABANDON));
+        assert_eq!(
+            xmr.address.as_deref(),
+            Some("49vDbkSo7eve3J41sBdjvjaBUyz8qHohsQcGtRf63qEUTMBvmA45fpp5pSacMdSg7A3b71RejLzB8EkGbfjp5PELVF2N4Zn")
+        );
         assert_eq!(eth.mnemonic.as_deref(), Some(ABANDON));
         assert_eq!(sol.mnemonic.as_deref(), Some(ABANDON));
         assert_eq!(ltc.mnemonic.as_deref(), Some(ABANDON));
@@ -165,6 +196,7 @@ mod tests {
         assert_eq!(eth.address, again.1.address);
         assert_eq!(sol.address, again.2.address);
         assert_eq!(ltc.address, again.3.address);
+        assert_eq!(xmr.address, again.4.address);
     }
 
     #[test]
@@ -180,7 +212,8 @@ mod tests {
         assert_eq!(twelve.split_whitespace().count(), 12);
         assert_eq!(twenty_four.split_whitespace().count(), 24);
         assert!(generate_mnemonic_words(15).is_err());
-        let (btc, eth, sol, ltc) = accounts_from_seed(&twenty_four, "").unwrap();
+        let (btc, eth, sol, ltc, xmr) = accounts_from_seed(&twenty_four, "").unwrap();
+        assert_eq!(xmr.mnemonic.as_deref(), Some(twenty_four.as_str()));
         assert_eq!(btc.mnemonic.as_deref(), Some(twenty_four.as_str()));
         assert_eq!(eth.mnemonic.as_deref(), Some(twenty_four.as_str()));
         assert_eq!(sol.mnemonic.as_deref(), Some(twenty_four.as_str()));
@@ -195,6 +228,7 @@ mod tests {
         assert_ne!(without.1.address, with.1.address);
         assert_ne!(without.2.address, with.2.address);
         assert_ne!(without.3.address, with.3.address);
+        assert_ne!(without.4.address, with.4.address);
         assert_eq!(with.0.mnemonic.as_deref(), Some(ABANDON));
         assert_eq!(with.1.mnemonic.as_deref(), Some(ABANDON));
         assert_eq!(with.2.mnemonic.as_deref(), Some(ABANDON));
@@ -204,13 +238,16 @@ mod tests {
         assert_eq!(with.1.address, again.1.address);
         assert_eq!(with.2.address, again.2.address);
         assert_eq!(with.3.address, again.3.address);
+        assert_eq!(with.4.address, again.4.address);
     }
 
     #[test]
     fn ltc_testnet_network_maps_to_tltc_path() {
-        let (_, _, _, ltc) =
+        let (_, _, _, ltc, xmr) =
             accounts_from_seed_on(ABANDON, "", bdk_wallet::bitcoin::Network::Testnet).unwrap();
         assert!(ltc.address.as_ref().unwrap().starts_with("tltc1q"));
         assert_eq!(ltc.path.as_deref(), Some("m/84'/1'/0'/0/0"));
+        assert!(xmr.address.as_ref().unwrap().starts_with('5'), "stagenet prefix");
+        assert_eq!(xmr.network.as_deref(), Some("stagenet"));
     }
 }

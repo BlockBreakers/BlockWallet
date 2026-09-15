@@ -139,6 +139,11 @@ pub fn btc_cache_dir() -> io::Result<PathBuf> {
     ensure_dir(cache_dir()?.join("btc"))
 }
 
+/// Monero scan caches: one encrypted file per account. See `xmr_chain::ScanCache`.
+pub fn xmr_cache_dir() -> io::Result<PathBuf> {
+    ensure_dir(cache_dir()?.join("xmr"))
+}
+
 pub fn token_icon_path(symbol: &str) -> PathBuf {
     let file = format!("{}.png", symbol);
     let cached = icon_cache_path()

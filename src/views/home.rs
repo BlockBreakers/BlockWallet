@@ -143,6 +143,23 @@ pub fn home_view(app_settings: Arc<Mutex<ApplicationSettings>>) -> (gtk::Box, Na
                 }
                 items.push(RowItem { token, amount: display, fiat: None });
             }
+            if let Some(token) = snapshot.tokens.eth_tokens.get("xmr:XMR").cloned() {
+                let mut display = snapshot
+                    .xmr_wallets
+                    .first()
+                    .map(|w| w.balance.lock().unwrap().clone())
+                    .unwrap_or_else(|| "0 XMR".into());
+                if nav::label_is_offline(&display) {
+                    offline = true;
+                }
+                if nav::label_is_pending_sync(&display) {
+                    syncing = true;
+                    // A Monero sync can run for minutes and reports how far it has got, so its
+                    // own "Syncing… 42%" is kept rather than flattened to the bare word.
+                    display = nav::sync_label(&display);
+                }
+                items.push(RowItem { token, amount: display, fiat: None });
+            }
 
             // Fiat is optional and off by default, so the total is only meaningful when
             // every row has a quote. `total` stays None otherwise rather than showing a
@@ -150,7 +167,7 @@ pub fn home_view(app_settings: Arc<Mutex<ApplicationSettings>>) -> (gtk::Box, Na
             let mut total: Option<f64> = None;
             if show_prices && !fiat.is_empty() {
                 if price_ticks == 0 {
-                    if let Ok(prices) = crate::currencies::prices::fetch_prices(&["BTC", "ETH", "SOL", "LTC"], &fiat) {
+                    if let Ok(prices) = crate::currencies::prices::fetch_prices(&["BTC", "ETH", "SOL", "LTC", "XMR"], &fiat) {
                         price_cache = prices;
                     }
                 }
@@ -423,16 +440,16 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_wallet_still_shows_all_four_chains() {
+    fn an_empty_wallet_still_shows_all_five_chains() {
         // Nothing held anywhere. Hiding here would leave a new user with a blank screen and
         // no way to tap through and receive.
-        let shown = shown_labels(&["0 BTC", "0 ETH", "0 SOL", "0 LTC"]);
-        assert_eq!(shown.len(), 4);
+        let shown = shown_labels(&["0 BTC", "0 ETH", "0 SOL", "0 LTC", "0.0 XMR"]);
+        assert_eq!(shown.len(), 5);
     }
 
     #[test]
     fn once_anything_is_held_the_empty_chains_drop_away() {
-        let shown = shown_labels(&["0.5 BTC", "0 ETH", "0 SOL", "0 LTC"]);
+        let shown = shown_labels(&["0.5 BTC", "0 ETH", "0 SOL", "0 LTC", "0.0 XMR"]);
         assert_eq!(shown, vec!["0.5 BTC"]);
     }
 

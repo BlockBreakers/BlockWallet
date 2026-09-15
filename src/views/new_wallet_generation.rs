@@ -257,10 +257,12 @@ pub fn generate_wallet_view(window: ApplicationWindow, app_settings: Application
                 return;
             }
             password_error.set_visible(false);
+            let freshly_generated = !draft.borrow().from_restore;
             let saved = app_settings.lock().unwrap().finish_onboarding(
                 &mnemonic,
                 &passphrase,
                 &password,
+                freshly_generated,
             );
             match saved {
                 Ok(()) => {

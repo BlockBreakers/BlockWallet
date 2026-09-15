@@ -115,6 +115,22 @@ pub fn activity_view(app_settings: Arc<Mutex<ApplicationSettings>>) -> gtk::Box 
                     });
                 }
             }
+            for wallet in &snapshot.xmr_wallets {
+                if nav::label_is_offline(&wallet.balance.lock().unwrap()) {
+                    offline = true;
+                }
+                for item in wallet.history.lock().unwrap().iter() {
+                    let incoming = item.amount_piconero >= 0;
+                    let amount = crate::currencies::xmr_chain::format_xmr(item.amount_piconero.unsigned_abs());
+                    rows.push(ActivityRow {
+                        incoming,
+                        amount: format!("{amount} XMR"),
+                        chain: "xmr".into(),
+                        confirmations: item.confirmations,
+                        txid: item.txid.clone(),
+                    });
+                }
+            }
             // Fewest confirmations first, so the newest transactions lead. Confirmation
             // count is the only ordering signal the per-chain history items all carry.
             rows.sort_by_key(|row| row.confirmations);

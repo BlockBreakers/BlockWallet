@@ -99,6 +99,20 @@ pub fn label_is_pending_sync(text: &str) -> bool {
     lower.contains("uninitialized") || lower.contains("syncing")
 }
 
+/// What to show for a balance that is still syncing.
+///
+/// A chain that reports its own progress ("Syncing… 42% (840 of 2000 blocks)") keeps that
+/// text, since for Monero the wait can be minutes and a bare word gives no sense of it
+/// ending. Anything else, including the "Uninitialized" a loop starts with, becomes the
+/// plain word.
+pub fn sync_label(text: &str) -> String {
+    if text.starts_with("Syncing") {
+        text.to_string()
+    } else {
+        "Syncing…".to_string()
+    }
+}
+
 /// Is this balance label a confirmed zero, safe to hide?
 ///
 /// Only a real, settled zero counts. "Syncing…" and an offline label both parse as an amount
@@ -194,5 +208,18 @@ mod tests {
 
         // A held balance that cannot be refreshed stays visible too.
         assert!(!is_confirmed_zero("2.5 ETH (offline)"));
+    }
+
+    #[test]
+    fn a_sync_label_keeps_reported_progress_and_hides_the_placeholder() {
+        // Monero reports how far along it is; that is worth showing, and it still counts as
+        // pending so nothing hides or totals it.
+        let progress = "Syncing… 42% (840 of 2000 blocks)";
+        assert_eq!(sync_label(progress), progress);
+        assert!(label_is_pending_sync(progress));
+        assert!(!is_confirmed_zero(progress));
+        // The word every loop starts with is an implementation detail, not a status.
+        assert_eq!(sync_label("Uninitialized"), "Syncing…");
+        assert_eq!(sync_label("Syncing…"), "Syncing…");
     }
 }

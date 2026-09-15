@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  Self-custody Bitcoin, Ethereum, Solana and Litecoin wallet for the
+  Self-custody Bitcoin, Ethereum, Solana, Litecoin and Monero wallet for the
   <a href="https://puri.sm/products/librem-5/">Librem 5</a> (PureOS / Phosh)
   and other GTK4 Linux desktops.
 </p>
@@ -22,6 +22,15 @@ v0.1.0, which passed all 41 of its boxes on real hardware in August 2026. v0.2.0
 spot-checked on the same device rather than re-run end to end: it installs, launches, syncs
 against live nodes with the batched token read working, and renders a zero-balance wallet
 correctly. The rest of the checklist is owed.
+
+**Monero is new and unreleased.** It landed in September 2026 after v0.2.2 and has not been
+on the phone. What has been shown, against live public nodes from a desktop: syncing to the
+tip on mainnet and stagenet, recognising a real stagenet faucet payment and holding it locked
+for ten blocks, then spending it: a 0.01 XMR stagenet transaction (`226d2fe8…`, one input,
+fee 0.00003 XMR) built, signed and broadcast by this code, mined in block 2208289, seen by the
+recipient account and netted correctly by the sender with its change. Nothing has moved on
+mainnet. The network-gated tests in `tests/xmr.rs` are the record. The Flatpak's vendored source list has not been regenerated for the new crates,
+so an offline bundle build will fail until `scripts/flatpak-gen-sources.sh` is run on Linux.
 
 Known unproven areas, stated plainly rather than buried: cross-chain swaps have never moved
 real coins, because THORChain's global trading halt was in force for most of development and
@@ -132,9 +141,9 @@ Windows (MSYS2 mingw64 + GNU rustc). Plain `cargo run` uses MSVC and has no
 
 Block Wallet is a wallet you actually hold the keys to, built for a Linux phone.
 
-**One recovery phrase, four chains.** A single BIP39 phrase derives every account: Bitcoin
-(BIP84 `bc1q…`), Ethereum (BIP44), Solana (SLIP-0010 ed25519) and Litecoin. There is no
-account to create, no email, no KYC, and nothing to sign up for. Write the phrase down and
+**One recovery phrase, five chains.** A single BIP39 phrase derives every account: Bitcoin
+(BIP84 `bc1q…`), Ethereum (BIP44), Solana (SLIP-0010 ed25519), Litecoin and Monero. There is
+no account to create, no email, no KYC, and nothing to sign up for. Write the phrase down and
 that is the whole backup.
 
 **Your keys never leave the device.** The store is a single encrypted file (Argon2id at
@@ -148,11 +157,12 @@ context strings that never contain a phrase, key or password.
 
 **Your nodes, not ours.** Every chain talks to an endpoint you choose: an Electrum or
 Esplora server for Bitcoin, any JSON-RPC for Ethereum and Solana, an Esplora-style server
-for Litecoin. The defaults are public endpoints so it works out of the box, but those
-endpoints see which addresses you ask about. Point it at your own server in Settings and
-that stops. Remote endpoints must use TLS; plaintext `http://` is accepted only for a node
-running on the device itself. Nothing a node says is taken on trust: fee estimates are
-capped, and a fee larger than the amount being sent is refused rather than shown.
+for Litecoin, any `monerod` for Monero. The defaults are public endpoints so it works out of
+the box, but those endpoints see which addresses you ask about (Monero excepted: see below).
+Point it at your own server in Settings and that stops. Remote endpoints must use TLS;
+plaintext `http://` is accepted only for a node running on the device itself. Nothing a node
+says is taken on trust: fee estimates are capped, and a fee larger than the amount being sent
+is refused rather than shown.
 
 **It asks a node as little as it can.** A sync costs the same whether the wallet is tracking
 four tokens or three hundred: Ethereum balances are read in a single `eth_call` through
@@ -162,6 +172,18 @@ endpoint. A wallet that hammers one gets rate-limited, and a rate-limited node i
 indistinguishable from being offline, which is exactly how Bitcoin appeared broken for the
 whole of this project's early life. Multicall3 is used for reads only, never for anything
 signed, so it can affect what you see but never what you spend.
+
+**Monero is the exception, and it is the node that learns nothing.** No Monero node can
+answer "what does this address hold": payments go to one-time keys that only the private
+view key can recognise. So the wallet downloads every block since the account was born and
+checks each output itself, on the phone. A sync tells the node which blocks you asked for and
+nothing else. The cost is time: a wallet created here scans from its own creation and is
+current within minutes, but a restored phrase or imported spend key scans the last thirty
+days by default, which is a couple of hours over a public node, and anything older needs a
+restore height in **Settings → Monero**. What it finds is kept in a cache file so a killed
+app resumes rather than restarting, and that file is encrypted under a key derived from the
+view key: it can be read by anyone who can already see every payment to the account, and by
+no one else. The [Monero](#monero) section below has the rest.
 
 **Receiving works with the radios off.** Addresses and QR codes are derived locally, so
 the receive screen is fully usable in airplane mode or when a node is unreachable. The app
@@ -204,6 +226,7 @@ Captured at 360×720, the Librem 5's logical resolution.
 | **Ethereum** | BIP44 `m/44'/60'/0'/0/0` | mainnet, Sepolia, **Arbitrum One, Base, Optimism, Polygon PoS, BNB Smart Chain, Avalanche C-Chain** | Alloy. One address across all of them. Native gas token follows the chain (ETH / POL / BNB / AVAX) |
 | **Solana** | SLIP-0010 ed25519 `m/44'/501'/0'/0'` | mainnet, devnet | SOL and SPL tokens, hand-rolled transaction format, no `solana-sdk` dependency |
 | **Litecoin** | BIP84-style `m/84'/2'/0'/0/0` | mainnet, testnet | Hand-rolled: no Litecoin fork of `bitcoin`/`bdk_wallet` exists on crates.io, so this reuses the project's BIP32/secp256k1/BIP143 code and adds Litecoin's own bech32 and WIF encoding |
+| **Monero** | Ledger's scheme: secp256k1 `m/44'/128'/0'/0/0`, then `keccak256` reduced to an ed25519 scalar | mainnet, stagenet | monero-oxide (`monero-wallet`) for scanning, CLSAG and Bulletproofs+; the daemon transport, cache, coin selection and every safety check are this project's. Standard address only, no subaddresses |
 
 Tokens: about 315 bundled entries, covering roughly 275 ERC-20s across the seven EVM networks
 and the top 40 SPL tokens on Solana. Every contract address and mint was verified on-chain
@@ -227,7 +250,7 @@ bundling one would show a balance that could not be spent, which is worse than n
 Because the list is long, the swap screen picks tokens through a searchable list rather than a
 dropdown. Typing filters on the whole label, so a chain name narrows it as well as a symbol.
 
-Home shows all four chains while the wallet is empty, so a new wallet looks like a wallet
+Home shows all five chains while the wallet is empty, so a new wallet looks like a wallet
 rather than a blank page, and narrows to just what you hold the moment a balance lands. It
 needs no setting: the rule flips itself.
 
@@ -264,6 +287,11 @@ Bitcoin and Litecoin have no on-chain DEX, so a vault-based venue is the only ro
 That means the funds are briefly out of your control between the two legs, which the app says
 plainly on the offer and again on the review screen before you can confirm. Litecoin goes
 through THORChain specifically: Maya has no LTC pool, and says so before making a request.
+
+Monero is not in the swap picker at all. Neither THORChain nor Maya has ever run an XMR pool,
+and the aggregators are single-chain, so there is no venue to ask; listing it would only ever
+produce "no offers". If a vault-based venue adds Monero, the cross-chain path built for
+Bitcoin and Litecoin is the shape it would take.
 
 ### Why aggregators rather than individual exchanges
 
@@ -324,6 +352,62 @@ you run your own node, set it in **Settings -> Swaps** and it is tried first, ah
 public list. The cross-chain paths are unit-tested against captured responses but have not
 moved real coins.
 
+## Monero
+
+Monero is built differently from the other four chains and behaves differently, so it gets
+its own account of what to expect.
+
+**Keys.** Monero has no derivation standard for BIP39 phrases; its native format is a
+25-word seed that *is* the private spend key. Every BIP39 wallet that added Monero invented
+its own bridge, and this one uses Ledger's, the most widely deployed: a secp256k1 BIP32 key at
+`m/44'/128'/0'/0/0`, hashed with keccak256 and reduced to an ed25519 scalar, gives the spend
+key; the view key is derived from it the way every Monero wallet does. The derivation is
+pinned by a test vector so it cannot drift between releases. To move the account to another
+Monero wallet, reveal the account in **Wallets** and use its private spend key with that
+wallet's "restore from keys" (the view key and address are shown alongside, since the dialog
+asks for all three). Importing goes the other way: paste a 64-character spend key. Monero's
+own 25-word seed is not accepted, because it needs a 1626-word list this wallet does not carry;
+any Monero wallet shows the spend key it encodes.
+
+**Syncing.** The wallet scans blocks itself, as explained [above](#what-it-is). Where the
+scan starts is the one thing it needs to be told:
+
+- A wallet created here remembers when its phrase was generated and starts a day before
+  that. Nothing to configure.
+- A restored phrase or imported key starts thirty days back. If the account is older than
+  that, set **Settings → Monero → Restore height** to a block before its first payment
+  (any block explorer converts a date to a height). Lowering it rescans from there; raising it
+  is allowed too, and is how a needless scan is cut short.
+- Progress shows on the balance as a percentage. It is saved every twenty blocks, so
+  locking, closing or losing signal loses nothing.
+
+Public nodes currently answer the fast binary block request without the hashes the library
+needs to trust it, so every block costs three ordinary RPC calls; the wallet keeps five in
+flight where the node allows it and drops to one where it does not. A month of mainnet is a
+couple of hours on a good node.
+
+**Spending.** Monero locks every received output for ten blocks (about twenty minutes), and
+the balance says so: `0.5 XMR (+0.1 pending)` means 0.1 XMR has arrived and cannot be spent
+yet. A send picks the largest unlocked outputs, asks the node for fifteen decoys per input,
+and signs on the device; the review card shows the amount, the fee at the chosen priority and
+how many inputs the ring signatures will cover. The fee rate a node reports is capped, as on
+every chain. Once broadcast, the spent outputs are marked immediately, so a second send cannot
+pick them, and the transaction shows in **Activity** with zero confirmations until it lands. A
+send that never confirms releases its outputs after a day.
+
+**What is left out**, deliberately: subaddresses (this wallet has one standard address per
+account, which a Monero user should know means payments to it are linkable by the payer);
+incoming payments still in the mempool (they show once mined); outputs under an additional
+timelock, such as mining rewards paid to this address (skipped rather than shown as spendable
+when they are not); and authenticated daemons (`--rpc-login`).
+
+**Stagenet is the test network.** Monero's testnet is the developers' playground and forks
+ahead of mainnet; stagenet is the one that behaves like mainnet with worthless coins, and it
+is what **Use test networks** selects. No public stagenet node offers TLS, so the built-in
+stagenet defaults are the only plaintext endpoints this wallet ships. That is acceptable
+only because a Monero sync sends nothing about the account and the coins are worthless; a
+node you enter yourself is held to the same TLS rule as every other chain.
+
 ## Trying it safely
 
 `BLOCKWALLET_HOME` relocates the entire profile, so a test run cannot touch an existing
@@ -334,7 +418,7 @@ BLOCKWALLET_HOME=~/blockwallet-test RUST_LOG=debug block_wallet
 ```
 
 Turn on **Settings → Use test networks** for Bitcoin testnet, Ethereum Sepolia, Solana
-devnet and Litecoin testnet in one switch. The header chip turns green.
+devnet, Litecoin testnet and Monero stagenet in one switch. The header chip turns green.
 
 ## Data locations
 
@@ -346,6 +430,7 @@ User files follow the XDG Base Directory spec. Override the root with `BLOCKWALL
 | Network settings (`network.yml`) | `~/.config/blockwallet/` | `…/config/blockwallet/` |
 | Log (`blockwallet.log`) | `~/.local/state/blockwallet/` | `…/data/blockwallet/` |
 | Backups | `~/.local/share/blockwallet/backups/` | `…/data/blockwallet/backups/` |
+| Monero scan cache (encrypted, per account) | `~/.cache/blockwallet/xmr/` | `…/cache/blockwallet/xmr/` |
 
 ## Packaging and device QA
 

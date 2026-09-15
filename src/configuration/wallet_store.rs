@@ -77,6 +77,8 @@ pub struct PayloadV1 {
     pub sol: Vec<SolRecord>,
     #[serde(default)]
     pub ltc: Vec<LtcRecord>,
+    #[serde(default)]
+    pub xmr: Vec<XmrRecord>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -90,6 +92,9 @@ pub struct StoreSettings {
     pub sol_node: String,
     #[serde(default)]
     pub ltc_node: String,
+    /// Monero daemon RPC. Empty means the built-in public defaults, tried in order.
+    #[serde(default)]
+    pub xmr_node: String,
     /// THORNode endpoint for swap quotes. Empty means the built-in public default.
     #[serde(default)]
     pub thornode_url: String,
@@ -101,6 +106,8 @@ pub struct StoreSettings {
     pub sol_network: String,
     #[serde(default)]
     pub ltc_network: String,
+    #[serde(default)]
+    pub xmr_network: String,
     #[serde(default)]
     pub custom_tokens: Vec<CustomTokenRecord>,
     #[serde(default)]
@@ -134,7 +141,7 @@ pub struct CustomTokenRecord {
     pub name: String,
     pub address: String,
     pub decimals: i32,
-    /// "btc" | "eth" | "sol" | "ltc". Empty on records written before Solana support existed;
+    /// "btc" | "eth" | "sol" | "ltc" | "xmr". Empty on records written before Solana support existed;
     /// those all predate anything but ERC-20 custom tokens, so they default to "eth".
     #[serde(default)]
     pub chain: String,
@@ -164,6 +171,23 @@ pub struct LtcRecord {
     pub mnemonic: Option<String>,
     pub passphrase: Option<String>,
     pub private_key_wif: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct XmrRecord {
+    pub name: String,
+    pub mnemonic: Option<String>,
+    pub passphrase: Option<String>,
+    /// Private spend key, hex. Set only for an account imported by key; a seed-derived one
+    /// is re-derived on unlock like every other chain.
+    pub private_spend_key: Option<String>,
+    /// Block to start scanning from, when the user set one.
+    #[serde(default)]
+    pub restore_height: Option<u64>,
+    /// Unix time the phrase was generated, when this app generated it. Bounds the scan for a
+    /// new wallet so it does not have to be told a restore height.
+    #[serde(default)]
+    pub birthday: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -215,11 +239,13 @@ impl Default for PayloadV1 {
                 eth_node: String::new(),
                 sol_node: String::new(),
                 ltc_node: String::new(),
+                xmr_node: String::new(),
                 thornode_url: String::new(),
                 btc_network: String::new(),
                 eth_network: String::new(),
                 sol_network: String::new(),
                 ltc_network: String::new(),
+                xmr_network: String::new(),
                 custom_tokens: Vec::new(),
                 lock_timeout_secs: 0,
                 show_prices: false,
@@ -236,6 +262,7 @@ impl Default for PayloadV1 {
             eth: Vec::new(),
             sol: Vec::new(),
             ltc: Vec::new(),
+            xmr: Vec::new(),
         }
     }
 }
@@ -500,11 +527,13 @@ mod tests {
                 eth_node: "https://example.invalid".to_string(),
                 sol_node: "https://sol.example.invalid".to_string(),
                 ltc_node: "https://ltc.example.invalid".to_string(),
+                xmr_node: "https://xmr.example.invalid".to_string(),
                 thornode_url: "https://thornode.example.invalid".to_string(),
                 btc_network: "bitcoin".to_string(),
                 eth_network: "sepolia".to_string(),
                 sol_network: "devnet".to_string(),
                 ltc_network: "testnet".to_string(),
+                xmr_network: "stagenet".to_string(),
                 custom_tokens: Vec::new(),
                 lock_timeout_secs: 120,
                 show_prices: false,
@@ -540,6 +569,14 @@ mod tests {
                 mnemonic: Some("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about".to_string()),
                 passphrase: None,
                 private_key_wif: None,
+            }],
+            xmr: vec![XmrRecord {
+                name: "xmr_wallet".to_string(),
+                mnemonic: Some("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about".to_string()),
+                passphrase: None,
+                private_spend_key: None,
+                restore_height: Some(3_000_000),
+                birthday: None,
             }],
         }
     }

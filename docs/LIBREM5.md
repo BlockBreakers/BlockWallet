@@ -4,7 +4,7 @@ A **per-release** gate, not a one-off. Reset the boxes for each version under te
 through it again on real hardware; completed runs are recorded at the bottom.
 
 Run it on a real Librem 5 (Phosh, aarch64, ~3 GB RAM). Prefer **Bitcoin testnet**, **Ethereum
-Sepolia**, **Solana devnet**, and **Litecoin testnet**. Do not use mainnet funds.
+Sepolia**, **Solana devnet**, **Litecoin testnet**, and **Monero stagenet**. Do not use mainnet funds.
 
 Install with Flatpak (`docs/packaging.md`) or a `.deb`. Building natively on the phone takes
 hours, and Crimson's own `rustc` is too old for this crate; see the packaging notes.
@@ -64,7 +64,7 @@ since a long list is a layout problem and a slow poll is a "did that work?" prob
 
 - [ ] Create 12-word wallet: write down phrase, confirm, set password
 - [ ] Force-quit and reopen: unlock screen, not a second create flow
-- [ ] Restore on a throwaway profile with a known test phrase; BTC address is BIP84 `tb1q`/`bc1q`, ETH is `0x…`, SOL is a base58 address, and LTC is `ltc1q…`/`tltc1q…`
+- [ ] Restore on a throwaway profile with a known test phrase; BTC address is BIP84 `tb1q`/`bc1q`, ETH is `0x…`, SOL is a base58 address, LTC is `ltc1q…`/`tltc1q…`, and XMR is a 95-character address starting `4` (mainnet) or `5` (stagenet)
 - [ ] Lock wipes keys from the UI; Wallets does not show the mnemonic until Reveal + password
 
 ## 3. Receive (radios on and off)
@@ -74,6 +74,7 @@ since a long list is a layout problem and a slow poll is a "did that work?" prob
 - [ ] Ethereum receive: address + QR visible
 - [ ] Solana receive: address + QR visible
 - [ ] Litecoin receive: address + QR visible
+- [ ] Monero receive: address + QR visible, and the balance row reads "Syncing…" with a percentage on a fresh account rather than "offline"
 - [ ] Enable airplane mode / kill switches: receive address and QR still show
 - [ ] Banner says the node is unreachable / receive still works
 - [ ] Copy an address, then copy something else in another app: the second value is still on the clipboard a minute later (addresses must not auto-clear)
@@ -96,6 +97,10 @@ since a long list is a layout problem and a slow poll is a "did that work?" prob
 - [ ] Optional: send the bundled devnet USDC-SPL (or a token added by mint address) to confirm the associated-token-account creation path works
 - [ ] Settings → switch the ETH network dropdown to an L2 (Arbitrum/Base/Optimism/Polygon/BSC/Avalanche): balance row shows the correct native symbol (POL/BNB/AVAX where applicable, ETH otherwise), and the "I understand this spends real value" checkbox is visible and gates Confirm on send
 - [ ] LTC testnet: fund from a faucet, send a small amount back; Review → summary shows **testnet**; mainnet send requires the "I understand this spends real litecoin" checkbox (spot-check by turning test networks off; do not broadcast)
+- [ ] XMR stagenet: fund from https://stagenet-faucet.xmr-tw.org; the payment shows as **pending** for ten blocks, then moves into the balance; send a small amount back once unlocked; Review → summary shows **stagenet** and the input count; mainnet send requires the "I understand this spends real monero" checkbox (spot-check by turning test networks off; do not broadcast)
+- [ ] XMR: force-quit the app mid-scan and reopen; the scan resumes from where it was rather than restarting (the percentage does not fall back to 0)
+- [ ] XMR: Settings → Monero → Restore height set to a block before the faucet payment, Save; the account rescans from there and finds the payment again exactly once
+- [ ] XMR: memory stays flat during a scan of a few hundred blocks (watch resident size; a public node answering with oversized blocks must not grow it without bound)
 
 ## 5. Swap
 
@@ -137,7 +142,7 @@ with different messages.
 - [ ] Auto-lock fires after idle
 - [ ] Auto-lock does **not** fire while the app is in use by touch alone (tap around for longer than the timeout)
 - [ ] When auto-lock fires while another app is in front, Block Wallet does **not** raise itself
-- [ ] Change BTC Electrum/Esplora URL, ETH RPC, SOL RPC, and LTC Esplora URL; Save; a toast confirms and balances refresh or show offline honestly
+- [ ] Change BTC Electrum/Esplora URL, ETH RPC, SOL RPC, LTC Esplora URL, and XMR daemon URL; Save; a toast confirms and balances refresh or show offline honestly
 - [ ] A plaintext `http://` endpoint is rejected unless it points at localhost
 - [ ] Every Settings row has a readable title and subtitle at 360 px wide; nothing is clipped or requires horizontal scrolling
 - [ ] Header shows the LIVE / TEST NETWORKS chip and it matches the network actually in use

@@ -15,11 +15,13 @@ use crate::currencies::ltc;
 use crate::currencies::ltc::LitecoinWallet;
 use crate::currencies::sol;
 use crate::currencies::sol::SolanaWallet;
+use crate::currencies::xmr;
+use crate::currencies::xmr::MoneroWallet;
 use crate::currencies::tokens::*;
 use crate::configuration::block_error;
 use crate::configuration::seed;
 use crate::configuration::wallet_store::{
-    BtcRecord, CustomTokenRecord, EthRecord, LtcRecord, PayloadV1, SolRecord, StoreSession, StoreSettings,
+    BtcRecord, CustomTokenRecord, EthRecord, LtcRecord, PayloadV1, SolRecord, StoreSession, StoreSettings, XmrRecord,
 };
 
 /// How often the Bitcoin balance is refreshed.
@@ -42,6 +44,13 @@ const BTC_SYNC_INTERVAL_SECS: u64 = 180;
 /// keeps a ten-token network under a thousand an hour and is still well inside a block time.
 const CHAIN_SYNC_INTERVAL_SECS: u64 = 60;
 
+/// How often a Monero account is re-synced once it has caught up.
+///
+/// A sync is a download of every block since the last one, so the cost is set by the block
+/// rate, not by this number: polling more often just finds fewer blocks each time. Two
+/// minutes is one Monero block.
+const XMR_SYNC_INTERVAL_SECS: u64 = 120;
+
 #[derive(Clone)]
 pub struct ApplicationSettings {
     pub config_path         : PathBuf,
@@ -54,6 +63,7 @@ pub struct ApplicationSettings {
     pub eth_wallets         : Vec<EthereumWallet>,
     pub sol_wallets         : Vec<SolanaWallet>,
     pub ltc_wallets         : Vec<LitecoinWallet>,
+    pub xmr_wallets         : Vec<MoneroWallet>,
     pub tokens              : Tokens,
     pub default_currency    : Token,
     pub starred             : HashMap<String, Token>,
@@ -64,11 +74,13 @@ pub struct ApplicationSettings {
     pub btc_node            : String,
     pub sol_node            : String,
     pub ltc_node            : String,
+    pub xmr_node            : String,
     pub thornode_url        : String,
     pub btc_network         : String,
     pub eth_network         : String,
     pub sol_network         : String,
     pub ltc_network         : String,
+    pub xmr_network         : String,
     pub custom_tokens       : Vec<CustomTokenRecord>,
     pub lock_timeout_secs   : u32,
     pub show_prices         : bool,
@@ -107,6 +119,7 @@ impl std::fmt::Debug for ApplicationSettings {
             .field("eth_wallets", &self.eth_wallets.len())
             .field("sol_wallets", &self.sol_wallets.len())
             .field("ltc_wallets", &self.ltc_wallets.len())
+            .field("xmr_wallets", &self.xmr_wallets.len())
             .finish_non_exhaustive()
     }
 }
@@ -123,6 +136,7 @@ impl ApplicationSettings {
         let ethereum_wallets = vec![];
         let solana_wallets = vec![];
         let litecoin_wallets = vec![];
+        let monero_wallets = vec![];
 
         if !epath.as_os_str().is_empty() && !std::path::Path::new(&epath).exists() {
             if let Err(why) = File::create(&epath) {
@@ -175,6 +189,8 @@ impl ApplicationSettings {
                 } else if tokens.eth_tokens[&key].symbol == "SOL" {
                     starred.insert(key.clone(), value.clone());
                 } else if tokens.eth_tokens[&key].symbol == "LTC" {
+                    starred.insert(key.clone(), value.clone());
+                } else if tokens.eth_tokens[&key].symbol == "XMR" {
                     starred.insert(key.clone(), value.clone());
                 }
             }
@@ -246,6 +262,7 @@ impl ApplicationSettings {
             eth_wallets         : ethereum_wallets,
             sol_wallets         : solana_wallets,
             ltc_wallets         : litecoin_wallets,
+            xmr_wallets         : monero_wallets,
             tokens              : tokens,
             default_currency    : default,
             starred             : starred,
@@ -256,11 +273,13 @@ impl ApplicationSettings {
             btc_node            : String::new(),
             sol_node            : String::new(),
             ltc_node            : String::new(),
+            xmr_node            : String::new(),
             thornode_url        : String::new(),
             btc_network         : String::from("bitcoin"),
             eth_network         : String::from("mainnet"),
             sol_network         : String::from("mainnet"),
             ltc_network         : String::from("litecoin"),
+            xmr_network         : String::from("monero"),
             custom_tokens       : Vec::new(),
             lock_timeout_secs   : 120,
             show_prices         : false,
@@ -331,17 +350,31 @@ impl ApplicationSettings {
         Ok(litecoin_wallet)
     }
 
+    pub fn generate_xmr_wallet(wallet_name: String) -> Result<MoneroWallet, block_error::Error> {
+        let mut monero_wallet = xmr::generate_xmr_hd_wallet().ok_or_else(|| {
+            block_error::Error::new("monero wallet generation failed".to_string())
+        })?;
+        if wallet_name.is_empty() {
+            monero_wallet.set_wallet_name(String::from("xmr_wallet"));
+        } else {
+            monero_wallet.set_wallet_name(wallet_name);
+        }
+        Ok(monero_wallet)
+    }
+
     pub fn apply_test_networks(&mut self, test: bool) {
         if test {
             let _ = self.apply_btc_network("testnet");
             self.apply_eth_network("sepolia");
             self.apply_sol_network("devnet");
             self.apply_ltc_network("testnet");
+            self.apply_xmr_network("stagenet");
         } else {
             let _ = self.apply_btc_network("bitcoin");
             self.apply_eth_network("mainnet");
             self.apply_sol_network("mainnet");
             self.apply_ltc_network("litecoin");
+            self.apply_xmr_network("monero");
         }
     }
 
@@ -350,6 +383,7 @@ impl ApplicationSettings {
             && self.eth_network.eq_ignore_ascii_case("sepolia")
             && self.sol_network.eq_ignore_ascii_case("devnet")
             && self.ltc_network.eq_ignore_ascii_case("testnet")
+            && self.xmr_network.eq_ignore_ascii_case("stagenet")
     }
 
     pub fn find_config_path() -> io::Result<PathBuf> {
@@ -470,6 +504,47 @@ impl ApplicationSettings {
         }
     }
 
+    pub fn apply_xmr_network(&mut self, name: &str) {
+        let network = crate::currencies::xmr_chain::parse_network(name);
+        self.xmr_network = crate::currencies::xmr_chain::network_name(network).to_string();
+
+        // The keys are the same on every Monero network; only the address prefix changes.
+        // Still re-derived rather than re-encoded in place, for the same reason as Litecoin:
+        // a wallet whose address says mainnet while the network says stagenet is a receive
+        // screen that lies. Imported accounts carry their own key and are re-encoded too,
+        // since a spend key is network-agnostic.
+        let Some(phrase) = self.mnemonic.clone() else {
+            return;
+        };
+        let passphrase = self.seed_passphrase.clone().unwrap_or_default();
+        let mut rebuilt: Vec<MoneroWallet> = Vec::with_capacity(self.xmr_wallets.len());
+        for wallet in &self.xmr_wallets {
+            let fresh = if wallet.mnemonic.as_deref() == Some(phrase.as_str()) {
+                seed::monero_from_seed_on(&phrase, &passphrase, "Monero", network)
+            } else if let Some(other_phrase) = wallet.mnemonic.as_deref() {
+                let other_passphrase = wallet.password.clone().unwrap_or_default();
+                MoneroWallet::from_mnemonic_on(other_phrase, &other_passphrase, network)
+            } else if let Some(key) = wallet.private_key.as_deref() {
+                MoneroWallet::from_private_key_on(key, network, wallet.restore_height)
+            } else {
+                continue;
+            };
+            match fresh {
+                Ok(mut account) => {
+                    account.wallet_name = wallet.wallet_name.clone();
+                    account.restore_height = wallet.restore_height;
+                    account.birthday = wallet.birthday;
+                    rebuilt.push(account);
+                }
+                Err(_) => {
+                    crate::configuration::logging::error("failed to re-derive Monero account on network change");
+                    rebuilt.push(wallet.clone());
+                }
+            }
+        }
+        self.xmr_wallets = rebuilt;
+    }
+
     pub fn apply_custom_tokens(&mut self) {
         for record in &self.custom_tokens {
             let chain = record.chain_or_default();
@@ -551,6 +626,18 @@ impl ApplicationSettings {
                 );
             }
         }
+        for wallet in &self.xmr_wallets {
+            if wallet.address.as_deref() == Some(address) {
+                // Both keys, because "restore from keys" in every Monero wallet asks for
+                // both even though the view key is derivable from the spend key.
+                let keys = match (&wallet.private_key, &wallet.private_view_key) {
+                    (Some(spend), Some(view)) => Some(format!("{spend} (spend)\nView key: {view}")),
+                    (Some(spend), None) => Some(spend.clone()),
+                    _ => None,
+                };
+                return (wallet.mnemonic.clone().or_else(|| self.mnemonic.clone()), keys);
+            }
+        }
         (None, None)
     }
 
@@ -575,10 +662,14 @@ impl ApplicationSettings {
         for wallet in &mut self.ltc_wallets {
             wallet.wipe_secrets();
         }
+        for wallet in &mut self.xmr_wallets {
+            wallet.wipe_secrets();
+        }
         self.btc_wallets.clear();
         self.eth_wallets.clear();
         self.sol_wallets.clear();
         self.ltc_wallets.clear();
+        self.xmr_wallets.clear();
     }
 
     pub fn lock_store(&mut self) {
@@ -594,9 +685,23 @@ impl ApplicationSettings {
     }
 
     pub fn restore_from_mnemonic(&mut self, phrase: &str, passphrase: &str) -> Result<(), block_error::Error> {
+        self.restore_from_mnemonic_born(phrase, passphrase, None)
+    }
+
+    /// `birthday` is the moment the phrase came into existence, when this app generated it.
+    /// Only Monero cares: the other chains ask a node about an address, but a Monero account
+    /// has to scan blocks, and a birthday is what stops a brand-new wallet scanning years of
+    /// chain it cannot possibly have received anything in.
+    pub fn restore_from_mnemonic_born(
+        &mut self,
+        phrase: &str,
+        passphrase: &str,
+        birthday: Option<u64>,
+    ) -> Result<(), block_error::Error> {
         let phrase = seed::parse_mnemonic(phrase)?;
         let network = crate::currencies::btc_chain::parse_network(&self.btc_network);
-        let (btc, eth, sol, ltc) = seed::accounts_from_seed_on(&phrase, passphrase, network)?;
+        let (btc, eth, sol, ltc, mut xmr) = seed::accounts_from_seed_on(&phrase, passphrase, network)?;
+        xmr.birthday = birthday;
         self.mnemonic = Some(phrase);
         self.seed_passphrase = if passphrase.is_empty() {
             None
@@ -607,23 +712,29 @@ impl ApplicationSettings {
         self.eth_wallets = vec![eth];
         self.sol_wallets = vec![sol];
         self.ltc_wallets = vec![ltc];
+        self.xmr_wallets = vec![xmr];
         Ok(())
     }
 
+    /// `freshly_generated` says the phrase was made by this app moments ago rather than typed
+    /// in from a backup, which lets the Monero account skip scanning history it predates.
     pub fn finish_onboarding(
         &mut self,
         phrase: &str,
         passphrase: &str,
         password: &str,
+        freshly_generated: bool,
     ) -> Result<(), block_error::Error> {
         crate::configuration::onboarding::validate_password(password, password)
             .map_err(|err| block_error::Error::new(err.as_label().to_string()))?;
-        self.restore_from_mnemonic(phrase, passphrase)?;
+        let birthday = freshly_generated.then(crate::currencies::xmr_chain::now_unix);
+        self.restore_from_mnemonic_born(phrase, passphrase, birthday)?;
         self.create_store(password)
     }
 
     fn ensure_primary_accounts(&mut self) -> Result<(), block_error::Error> {
-        if self.mnemonic.is_none() {
+        let generated_here = self.mnemonic.is_none();
+        if generated_here {
             self.mnemonic = Some(seed::generate_mnemonic()?);
         }
         let phrase = self.mnemonic.clone().ok_or_else(|| {
@@ -665,6 +776,14 @@ impl ApplicationSettings {
                 "Litecoin",
                 ltc_network,
             )?);
+        }
+        if self.xmr_wallets.is_empty() {
+            let xmr_network = crate::currencies::xmr_chain::parse_network(&self.xmr_network);
+            let mut wallet = seed::monero_from_seed_on(&phrase, &passphrase, "Monero", xmr_network)?;
+            if generated_here {
+                wallet.birthday = Some(crate::currencies::xmr_chain::now_unix());
+            }
+            self.xmr_wallets.push(wallet);
         }
         Ok(())
     }
@@ -708,11 +827,13 @@ impl ApplicationSettings {
                 eth_node: self.eth_node.clone(),
                 sol_node: self.sol_node.clone(),
                 ltc_node: self.ltc_node.clone(),
+                xmr_node: self.xmr_node.clone(),
                 thornode_url: self.thornode_url.clone(),
                 btc_network: self.btc_network.clone(),
                 eth_network: self.eth_network.clone(),
                 sol_network: self.sol_network.clone(),
                 ltc_network: self.ltc_network.clone(),
+                xmr_network: self.xmr_network.clone(),
                 custom_tokens: self.custom_tokens.clone(),
                 lock_timeout_secs: self.lock_timeout_secs,
                 show_prices: self.show_prices,
@@ -773,6 +894,17 @@ impl ApplicationSettings {
                     private_key_wif: if from_seed { None } else { wallet.private_key.clone() },
                 }
             }).collect(),
+            xmr: self.xmr_wallets.iter().map(|wallet| {
+                let from_seed = self.uses_store_seed(wallet.mnemonic.as_deref());
+                XmrRecord {
+                    name: wallet.wallet_name.clone().unwrap_or_default(),
+                    mnemonic: if from_seed { None } else { wallet.mnemonic.clone() },
+                    passphrase: if from_seed { None } else { wallet.password.clone() },
+                    private_spend_key: if from_seed || wallet.mnemonic.is_some() { None } else { wallet.private_key.clone() },
+                    restore_height: wallet.restore_height,
+                    birthday: wallet.birthday,
+                }
+            }).collect(),
         }
     }
 
@@ -798,6 +930,9 @@ impl ApplicationSettings {
         if !payload.settings.ltc_node.is_empty() {
             self.ltc_node = payload.settings.ltc_node;
         }
+        if !payload.settings.xmr_node.is_empty() {
+            self.xmr_node = payload.settings.xmr_node;
+        }
         if !payload.settings.btc_network.is_empty() {
             self.btc_network = payload.settings.btc_network;
         }
@@ -809,6 +944,9 @@ impl ApplicationSettings {
         }
         if !payload.settings.ltc_network.is_empty() {
             self.ltc_network = payload.settings.ltc_network;
+        }
+        if !payload.settings.xmr_network.is_empty() {
+            self.xmr_network = payload.settings.xmr_network;
         }
         self.custom_tokens = payload.settings.custom_tokens;
         self.lock_timeout_secs = payload.settings.lock_timeout_secs;
@@ -983,6 +1121,44 @@ impl ApplicationSettings {
                 )?);
             }
         }
+
+        self.xmr_wallets.clear();
+        let xmr_network = crate::currencies::xmr_chain::parse_network(&self.xmr_network);
+        for record in payload.xmr {
+            let record_passphrase = record
+                .passphrase
+                .as_deref()
+                .filter(|value| !value.is_empty())
+                .unwrap_or(seed_passphrase.as_str());
+            let mut wallet = if let Some(mnemonic) = record.mnemonic.as_ref().filter(|value| !value.is_empty()) {
+                MoneroWallet::from_mnemonic_on(mnemonic, record_passphrase, xmr_network)?
+            } else if let Some(key) = record.private_spend_key.as_ref().filter(|value| !value.is_empty()) {
+                MoneroWallet::from_private_key_on(key, xmr_network, record.restore_height)?
+            } else if let Some(phrase) = self.mnemonic.clone() {
+                seed::monero_from_seed_on(&phrase, record_passphrase, &record.name, xmr_network)?
+            } else {
+                continue;
+            };
+            if !record.name.is_empty() {
+                wallet.set_wallet_name(record.name);
+            }
+            wallet.restore_height = record.restore_height;
+            wallet.birthday = record.birthday;
+            self.xmr_wallets.push(wallet);
+        }
+        // A store written before Monero support gets its account on first unlock. Its
+        // phrase may be years old, so no birthday: the sync starts from a recent window and
+        // Settings offers a restore height for anything older.
+        if self.xmr_wallets.is_empty() {
+            if let Some(phrase) = self.mnemonic.clone() {
+                self.xmr_wallets.push(seed::monero_from_seed_on(
+                    &phrase,
+                    &seed_passphrase,
+                    "Monero",
+                    xmr_network,
+                )?);
+            }
+        }
         Ok(())
     }
 
@@ -1005,6 +1181,12 @@ impl ApplicationSettings {
     }
 
     pub fn update_balances(&self) {
+        // Retire whatever loops are already running before starting these. The main view is
+        // rebuilt on the way back from Settings, and without this each rebuild added another
+        // set of threads polling with the settings they were born with. For Monero that was
+        // worse than wasteful: two scanners sharing one cache file, one of them still using
+        // the restore height the user had just changed.
+        self.sync_epoch.fetch_add(1, Ordering::SeqCst);
         let mut run_before = false;
 
         for i in 0..self.btc_wallets.len() {
@@ -1332,6 +1514,98 @@ impl ApplicationSettings {
                 ),
             );
         }
+        for i in 0..self.xmr_wallets.len() {
+            let xmr_balance_arc = Arc::clone(&self.xmr_wallets[i].balance);
+            let history_arc = Arc::clone(&self.xmr_wallets[i].history);
+            let wallet = &self.xmr_wallets[i];
+            // Unlike the other chains this thread needs the keys, not just the address: the
+            // view key to recognise payments, the spend key to compute the key images that
+            // show when they have been spent. Both are wiped when the account snapshot drops.
+            let account = match (&wallet.private_key, &wallet.private_view_key, &wallet.address) {
+                (Some(spend), Some(view), Some(address)) => Some(crate::currencies::xmr_chain::SyncAccount {
+                    spend_hex: spend.clone(),
+                    view_hex: view.clone(),
+                    address: address.clone(),
+                    restore_height: wallet.restore_height,
+                    birthday: wallet.birthday,
+                }),
+                _ => None,
+            };
+            let xmr_node = self.xmr_node.clone();
+            let xmr_network = self.xmr_network.clone();
+            let epoch = Arc::clone(&self.sync_epoch);
+            let start_epoch = epoch.load(Ordering::SeqCst);
+
+            let (sender, receiver) = crate::configuration::ui_channel::unbounded();
+            thread::spawn(move || {
+                let mut first = true;
+                loop {
+                    if epoch.load(Ordering::SeqCst) != start_epoch {
+                        break;
+                    }
+                    if first {
+                        thread::sleep(Duration::from_secs(1));
+                        first = false;
+                    } else {
+                        thread::sleep(Duration::from_secs(XMR_SYNC_INTERVAL_SECS));
+                    }
+                    let Some(account) = account.as_ref() else {
+                        if sender.send_blocking(String::from("Uninitialized")).is_err() {
+                            break;
+                        }
+                        continue;
+                    };
+                    // A first scan can run for minutes, so progress is pushed to the label
+                    // as it goes, and the scan stops between batches once the wallet locks.
+                    let progress_sender = sender.clone();
+                    let progress_epoch = Arc::clone(&epoch);
+                    let mut progress = |label: &str| -> bool {
+                        if progress_epoch.load(Ordering::SeqCst) != start_epoch {
+                            return false;
+                        }
+                        progress_sender.send_blocking(label.to_string()).is_ok()
+                    };
+                    let label = match crate::currencies::xmr_chain::sync_account(
+                        account,
+                        &xmr_node,
+                        &xmr_network,
+                        &mut progress,
+                    ) {
+                        Ok(state) => {
+                            *history_arc.lock().unwrap() = state.history.clone();
+                            state.balance_display()
+                        }
+                        Err(why) => {
+                            // Logged rather than discarded, for the same reason as the other
+                            // chains. Chain errors carry endpoints and status codes, never keys.
+                            crate::configuration::logging::warn(&format!("balance sync failed: {why}"));
+                            String::from("offline")
+                        }
+                    };
+                    if sender.send_blocking(label).is_err() {
+                        break;
+                    }
+                }
+            });
+
+            crate::configuration::ui_channel::attach(
+                receiver,
+                clone!(
+                    #[weak]
+                    xmr_balance_arc,
+                    #[upgrade_or]
+                    ControlFlow::Break,
+                    move |price_text| {
+                        let mut xmr_balance = xmr_balance_arc.lock().unwrap();
+                        if price_text != "Uninitialized" {
+                            *xmr_balance = price_text;
+                        }
+
+                        ControlFlow::Continue
+                    }
+                ),
+            );
+        }
     }
 }
 
@@ -1361,6 +1635,14 @@ mod tests {
     }
 
     #[test]
+    fn test_generate_xmr_wallet() {
+        let wallet = ApplicationSettings::generate_xmr_wallet(String::from("test_name")).unwrap();
+        assert_eq!(wallet.wallet_name.clone().unwrap(), "test_name");
+        assert!(wallet.address.clone().unwrap().starts_with('4'));
+        assert!(wallet.birthday.is_some(), "a wallet generated here knows when it was born");
+    }
+
+    #[test]
     fn apply_test_networks_sets_btc_testnet_and_eth_sepolia() {
         let mut settings = ApplicationSettings::new(Tokens::new());
         settings.apply_test_networks(true);
@@ -1368,11 +1650,13 @@ mod tests {
         assert_eq!(settings.btc_network, "testnet");
         assert_eq!(settings.eth_network, "sepolia");
         assert_eq!(settings.ltc_network, "testnet");
+        assert_eq!(settings.xmr_network, "stagenet");
         settings.apply_test_networks(false);
         assert!(!settings.is_test_mode());
         assert_eq!(settings.btc_network, "bitcoin");
         assert_eq!(settings.eth_network, "mainnet");
         assert_eq!(settings.ltc_network, "litecoin");
+        assert_eq!(settings.xmr_network, "monero");
     }
 
     #[test]
@@ -1446,6 +1730,9 @@ mod tests {
         assert!(!settings.sol_wallets[0].address.as_ref().unwrap().is_empty());
         assert_eq!(settings.ltc_wallets[0].mnemonic.as_deref(), Some(ABANDON));
         assert!(settings.ltc_wallets[0].address.as_ref().unwrap().starts_with("ltc1q"));
+        assert_eq!(settings.xmr_wallets[0].mnemonic.as_deref(), Some(ABANDON));
+        assert!(settings.xmr_wallets[0].address.as_ref().unwrap().starts_with('4'));
+        assert!(settings.xmr_wallets[0].birthday.is_none(), "a restored phrase has no birthday");
         assert_eq!(
             settings.btc_wallets[0].address.as_deref(),
             Some("bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu")
@@ -1466,7 +1753,7 @@ mod tests {
         let _ = fs::remove_file(&path);
         settings.config_path = path.clone();
         settings
-            .finish_onboarding(ABANDON, "", "test-password")
+            .finish_onboarding(ABANDON, "", "test-password", false)
             .unwrap();
         assert_eq!(settings.mnemonic.as_deref(), Some(ABANDON));
         assert!(settings.seed_passphrase.is_none());
@@ -1496,7 +1783,7 @@ mod tests {
         let _ = fs::remove_file(&path);
         settings.config_path = path.clone();
         settings
-            .finish_onboarding(ABANDON, "trezor", "test-password")
+            .finish_onboarding(ABANDON, "trezor", "test-password", false)
             .unwrap();
         let btc = settings.btc_wallets[0].address.clone();
         let eth = settings.eth_wallets[0].address.clone();
@@ -1532,6 +1819,10 @@ mod tests {
         assert_eq!(settings.eth_wallets[0].mnemonic.as_deref(), Some(phrase.as_str()));
         assert_eq!(settings.sol_wallets[0].mnemonic.as_deref(), Some(phrase.as_str()));
         assert_eq!(settings.ltc_wallets[0].mnemonic.as_deref(), Some(phrase.as_str()));
+        assert_eq!(settings.xmr_wallets[0].mnemonic.as_deref(), Some(phrase.as_str()));
+        assert!(settings.xmr_wallets[0].birthday.is_some(), "generated by create_store, so born now");
+        let xmr_address = settings.xmr_wallets[0].address.clone();
+        let xmr_birthday = settings.xmr_wallets[0].birthday;
         let btc_address = settings.btc_wallets[0].address.clone();
         let eth_address = settings.eth_wallets[0].address.clone();
         let sol_address = settings.sol_wallets[0].address.clone();
@@ -1546,6 +1837,9 @@ mod tests {
         assert!(payload.sol[0].private_key.is_none());
         assert!(payload.ltc[0].mnemonic.is_none());
         assert!(payload.ltc[0].private_key_wif.is_none());
+        assert!(payload.xmr[0].mnemonic.is_none());
+        assert!(payload.xmr[0].private_spend_key.is_none(), "seed-derived: never a second copy of the key");
+        assert_eq!(payload.xmr[0].birthday, xmr_birthday);
 
         let mut reloaded = ApplicationSettings::new(Tokens::new());
         reloaded.config_path = path.clone();
@@ -1559,6 +1853,9 @@ mod tests {
         assert_eq!(reloaded.eth_wallets[0].address, eth_address);
         assert_eq!(reloaded.sol_wallets[0].address, sol_address);
         assert_eq!(reloaded.ltc_wallets[0].address, ltc_address);
+        assert_eq!(reloaded.xmr_wallets[0].address, xmr_address);
+        assert_eq!(reloaded.xmr_wallets[0].birthday, xmr_birthday);
+        assert!(reloaded.xmr_wallets[0].private_view_key.is_some());
         assert!(reloaded.logged_in);
         assert!(StoreSession::unlock(&path, "wrong").is_err());
         let _ = fs::remove_file(&path);
@@ -1646,6 +1943,7 @@ mod tests {
         assert!(settings.eth_wallets.is_empty());
         assert!(settings.sol_wallets.is_empty());
         assert!(settings.ltc_wallets.is_empty());
+        assert!(settings.xmr_wallets.is_empty());
     }
 
     #[test]
@@ -1658,12 +1956,13 @@ mod tests {
         let _ = fs::remove_file(&path);
         settings.config_path = path.clone();
         settings
-            .finish_onboarding(ABANDON, "trezor", "test-password")
+            .finish_onboarding(ABANDON, "trezor", "test-password", false)
             .unwrap();
         let btc = settings.btc_wallets[0].address.clone();
         let eth = settings.eth_wallets[0].address.clone();
         let sol = settings.sol_wallets[0].address.clone();
         let ltc = settings.ltc_wallets[0].address.clone();
+        let xmr = settings.xmr_wallets[0].address.clone();
         assert!(settings.is_unlocked());
         assert!(path.exists());
 
@@ -1676,6 +1975,7 @@ mod tests {
         assert!(settings.eth_wallets.is_empty());
         assert!(settings.sol_wallets.is_empty());
         assert!(settings.ltc_wallets.is_empty());
+        assert!(settings.xmr_wallets.is_empty());
         assert!(path.exists());
         assert!(settings.write_config().is_err());
         assert!(settings.unlock_store("wrong").is_err());
@@ -1691,10 +1991,12 @@ mod tests {
         assert_eq!(settings.eth_wallets[0].address, eth);
         assert_eq!(settings.sol_wallets[0].address, sol);
         assert_eq!(settings.ltc_wallets[0].address, ltc);
+        assert_eq!(settings.xmr_wallets[0].address, xmr);
         assert!(settings.btc_wallets[0].private_key.is_some());
         assert!(settings.eth_wallets[0].private_key.is_some());
         assert!(settings.sol_wallets[0].private_key.is_some());
         assert!(settings.ltc_wallets[0].private_key.is_some());
+        assert!(settings.xmr_wallets[0].private_key.is_some());
         let _ = fs::remove_file(&path);
     }
 
@@ -1708,7 +2010,7 @@ mod tests {
         let _ = fs::remove_file(&path);
         settings.config_path = path.clone();
         settings
-            .finish_onboarding(ABANDON, "", "test-password")
+            .finish_onboarding(ABANDON, "", "test-password", false)
             .unwrap();
         let address = settings.btc_wallets[0].address.clone().unwrap();
         assert!(settings.verify_password("test-password"));
@@ -1729,6 +2031,60 @@ mod tests {
         settings.lock_store();
         assert!(!settings.verify_password("wrong"));
         assert!(settings.secrets_for_address(&address).0.is_none());
+        let _ = fs::remove_file(&path);
+    }
+
+    /// An imported Monero spend key has no phrase behind it, so the key itself and the
+    /// restore height the user gave must survive the store, and the reveal must show both
+    /// keys since that is what "restore from keys" asks for elsewhere.
+    #[test]
+    fn imported_monero_key_and_restore_height_survive_the_store() {
+        let mut settings = ApplicationSettings::new(Tokens::new());
+        let path = std::env::temp_dir().join(format!(
+            "blockwallet-settings-xmr-import-{}.json",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&path);
+        settings.config_path = path.clone();
+        settings
+            .finish_onboarding(ABANDON, "", "test-password", true)
+            .unwrap();
+        assert!(settings.xmr_wallets[0].birthday.is_some(), "generated here");
+
+        let spend = "3b094ca7218f175e91fa2402b4ae239a2fe8262792a3e718533a1a357a1e4109";
+        let mut imported = xmr::generate_from_private_key(spend, Some(2_500_000)).unwrap();
+        imported.set_wallet_name("Cold".to_string());
+        let imported_address = imported.address.clone().unwrap();
+        settings.xmr_wallets.push(imported);
+        settings.write_config().unwrap();
+
+        let payload = settings.to_payload();
+        assert_eq!(payload.xmr.len(), 2);
+        assert_eq!(payload.xmr[1].private_spend_key.as_deref(), Some(spend));
+        assert_eq!(payload.xmr[1].restore_height, Some(2_500_000));
+        assert!(payload.xmr[1].mnemonic.is_none());
+
+        let (phrase, keys) = settings.secrets_for_address(&imported_address);
+        assert_eq!(phrase.as_deref(), Some(ABANDON), "the reveal falls back to the store phrase");
+        let keys = keys.unwrap();
+        assert!(keys.starts_with(spend));
+        assert!(keys.contains("View key: "));
+
+        let mut reloaded = ApplicationSettings::new(Tokens::new());
+        reloaded.config_path = path.clone();
+        reloaded.unlock_store("test-password").unwrap();
+        assert_eq!(reloaded.xmr_wallets.len(), 2);
+        assert_eq!(reloaded.xmr_wallets[1].address.as_deref(), Some(imported_address.as_str()));
+        assert_eq!(reloaded.xmr_wallets[1].wallet_name.as_deref(), Some("Cold"));
+        assert_eq!(reloaded.xmr_wallets[1].restore_height, Some(2_500_000));
+        assert!(reloaded.xmr_wallets[1].mnemonic.is_none());
+
+        // Switching network keeps the imported account, on the new network's encoding.
+        reloaded.apply_xmr_network("stagenet");
+        assert_eq!(reloaded.xmr_wallets.len(), 2);
+        assert!(reloaded.xmr_wallets[1].address.as_ref().unwrap().starts_with('5'));
+        assert_eq!(reloaded.xmr_wallets[1].restore_height, Some(2_500_000));
+        assert_eq!(reloaded.xmr_wallets[1].wallet_name.as_deref(), Some("Cold"));
         let _ = fs::remove_file(&path);
     }
 }

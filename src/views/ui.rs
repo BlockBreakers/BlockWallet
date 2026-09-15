@@ -17,12 +17,13 @@ pub const GUTTER: i32 = 12;
 // ------------------------------------------------------------------ chain identity
 
 /// Brand colour class and display name for a wallet family. `chain` is `Token.chain`
-/// ("btc" / "eth" / "sol" / "ltc"), the same dispatch key the send and balance code uses.
+/// ("btc" / "eth" / "sol" / "ltc" / "xmr"), the same dispatch key the send and balance code uses.
 pub fn chain_css_class(chain: &str) -> &'static str {
     match chain {
         "btc" => "chain-btc",
         "sol" => "chain-sol",
         "ltc" => "chain-ltc",
+        "xmr" => "chain-xmr",
         _ => "chain-eth",
     }
 }
@@ -32,6 +33,7 @@ pub fn chain_display_name(chain: &str) -> &'static str {
         "btc" => "Bitcoin",
         "sol" => "Solana",
         "ltc" => "Litecoin",
+        "xmr" => "Monero",
         _ => "Ethereum",
     }
 }
@@ -43,6 +45,7 @@ pub fn chain_icon_name(chain: &str) -> &'static str {
     match chain {
         "btc" => "security-high-symbolic",
         "ltc" => "emoji-symbols-symbolic",
+        "xmr" => "view-conceal-symbolic",
         "sol" => "weather-clear-symbolic",
         _ => "emblem-system-symbolic",
     }
@@ -630,11 +633,11 @@ mod tests {
     fn chain_classes_are_distinct_per_family() {
         // A shared class would let two chains' rows look identical, which is exactly the
         // confusion the coloured monogram exists to prevent.
-        let classes = ["btc", "eth", "sol", "ltc"].map(chain_css_class);
+        let classes = ["btc", "eth", "sol", "ltc", "xmr"].map(chain_css_class);
         let mut unique = classes.to_vec();
         unique.sort_unstable();
         unique.dedup();
-        assert_eq!(unique.len(), 4);
+        assert_eq!(unique.len(), 5);
     }
 
     #[test]

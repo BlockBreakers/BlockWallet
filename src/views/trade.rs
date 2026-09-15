@@ -33,6 +33,12 @@ fn swappable_assets(settings: &ApplicationSettings) -> Vec<(String, SwapAsset)> 
     // Stable ordering so the dropdown does not reshuffle between visits.
     tokens.sort_by(|a, b| (a.chain.as_str(), a.symbol.as_str()).cmp(&(b.chain.as_str(), b.symbol.as_str())));
     for token in tokens {
+        // No venue this wallet talks to has a Monero pool: THORChain and Maya never listed
+        // it, and the aggregators are single-chain. Listing it would only ever produce
+        // "no offers", so it is left out rather than shown as a swap that cannot happen.
+        if token.chain == "xmr" {
+            continue;
+        }
         let asset = SwapAsset::from_token(token);
         let label = format!("{} ({})", asset.symbol, ui::chain_display_name(&asset.chain));
         if !out.iter().any(|(existing, _)| existing == &label) {

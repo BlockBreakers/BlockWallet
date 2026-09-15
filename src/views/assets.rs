@@ -161,6 +161,32 @@ pub fn asset_view(
                 }
                 items.push((token, display));
             }
+            if let Some(token) = snapshot.tokens.eth_tokens.get("xmr:XMR").cloned() {
+                let mut display = snapshot
+                    .xmr_wallets
+                    .iter()
+                    .map(|w| nav::parse_leading_amount(&w.balance.lock().unwrap()))
+                    .sum::<f64>()
+                    .to_string();
+                if snapshot.xmr_wallets.iter().any(|w| nav::label_is_offline(&w.balance.lock().unwrap())) {
+                    offline = true;
+                    display = format!("{display} XMR (offline)");
+                } else if snapshot
+                    .xmr_wallets
+                    .iter()
+                    .all(|w| nav::label_is_pending_sync(&w.balance.lock().unwrap()))
+                    && !snapshot.xmr_wallets.is_empty()
+                {
+                    display = snapshot
+                        .xmr_wallets
+                        .first()
+                        .map(|w| nav::sync_label(&w.balance.lock().unwrap()))
+                        .unwrap_or_else(|| "Syncing…".into());
+                } else {
+                    display = format!("{display} XMR");
+                }
+                items.push((token, display));
+            }
             if sender.send_blocking((items, offline, snapshot)).is_err() {
                 break;
             }
@@ -212,10 +238,10 @@ pub fn asset_view(
                 });
                 ui::set_notice_warning(&banner, offline);
 
-                // One boxed-list group per chain. A flat list of 4 chains' tokens reads as
+                // One boxed-list group per chain. A flat list of 5 chains' tokens reads as
                 // an undifferentiated pile once ERC-20s and SPL tokens are in it, and the
                 // chain is the thing that decides where a send actually goes.
-                for chain in ["btc", "eth", "sol", "ltc"] {
+                for chain in ["btc", "eth", "sol", "ltc", "xmr"] {
                     let chain_items: Vec<&(Token, String)> =
                         shown.iter().filter(|(token, _)| token.chain == chain).collect();
                     if chain_items.is_empty() {

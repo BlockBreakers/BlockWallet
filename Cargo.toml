@@ -3,13 +3,13 @@ name = "block_wallet"
 version = "0.2.2"
 edition = "2021"
 rust-version = "1.85"
-description = "Self-custody Bitcoin and Ethereum wallet for the Librem 5"
+description = "Self-custody Bitcoin, Ethereum, Solana, Litecoin and Monero wallet for the Librem 5"
 license = "GPL-3.0-or-later"
 readme = "README.md"
 authors = ["Block Breakers"]
 homepage = "https://github.com/BlockBreakersHQ/BlockWallet"
 repository = "https://github.com/BlockBreakersHQ/BlockWallet"
-keywords = ["bitcoin", "ethereum", "wallet", "gtk", "librem"]
+keywords = ["bitcoin", "ethereum", "monero", "wallet", "librem"]
 categories = ["gui"]
 
 
@@ -54,6 +54,15 @@ glib = "0.21"
 gtk = { version = "0.10", package = "gtk4" }
 hex = "0.4.3"
 image = "0.24.5"
+# Monero. monero-oxide (the library formerly known as monero-serai) does the parts of Monero
+# that must not be hand-rolled: output scanning, CLSAG ring signatures and Bulletproofs+.
+# It is pure Rust on top of curve25519-dalek, which is already in the tree for Solana, so it
+# adds no C library and no cmake, which is what keeps the Librem 5 build feasible. Only the
+# daemon *interface* crate is taken, not its HTTP transport: `xmr_chain.rs` implements the
+# one-method transport trait over the reqwest client this wallet already ships, so Monero
+# does not introduce a second HTTP stack or a second TLS stack.
+monero-wallet = "0.2"
+monero-daemon-rpc = "0.2"
 pango = "0.21"
 rand = "0.8"
 reqwest = { version = "0.12", features = ["json", "blocking"] }

@@ -118,6 +118,7 @@ button.pill-button {
 .chain-eth   { background-color: #627eea; }
 .chain-sol   { background-color: #9945ff; }
 .chain-ltc   { background-color: #345d9d; }
+.chain-xmr   { background-color: #f26822; }
 
 /* Small chain tag next to a token name, so an ERC-20 USDC and an SPL USDC are tellable
  * apart at a glance — they are otherwise identical rows. */

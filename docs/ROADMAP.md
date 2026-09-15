@@ -239,6 +239,40 @@ gap the checklist did not cover at the time.
 All errors that previously vanished into `Err(_)` are now logged with their cause. That is
 what made several of these diagnosable at all.
 
+### Phase 12 — Monero — **done in code, not yet run on the phone** (September 2026)
+
+The first chain where a node cannot answer "what does this address hold", which forced a
+different shape from the other four:
+
+- Keys from the shared phrase by Ledger's bridge (secp256k1 `m/44'/128'/0'/0/0`, keccak256,
+  reduce), pinned by a test vector; import by private spend key, with a restore height
+- Scanning on the device via monero-oxide's `monero-wallet`, over a transport implemented on
+  the existing reqwest client so no second HTTP or TLS stack was added; five blocks in flight
+  where a node allows it, one where it resets connections; node failover mid-scan
+- Scan state in an encrypted per-account cache, keyed from the view key, saved every twenty
+  blocks and resumed after a kill; reorgs detected by the remembered tip hash and by each
+  block's link to the last
+- A new wallet records its birthday and scans from the day before it; a restored phrase
+  scans a month back unless **Settings → Monero → Restore height** says otherwise
+- Spend detection by key image, so a spend from another wallet holding the same keys shows;
+  ten-block lock honoured in the balance; largest-first coin selection; decoys through the
+  library with the output distribution memoised per send; fee rate capped and the
+  fee-versus-amount rule applied; inputs marked spent at broadcast; a send that never lands
+  releases them after a day
+- Stagenet as the test network. No public stagenet node offers TLS, so the built-in stagenet
+  defaults are the one plaintext exception, documented in the README
+- Not in swaps: no venue lists XMR
+
+Proven so far, against live public nodes from a desktop: scanning to the tip on mainnet and
+stagenet; recognising a real stagenet faucet payment and holding it locked for ten blocks;
+spending it in a transaction this code built and signed, which was mined and reconciled from
+both ends. Nothing has moved on mainnet. See `tests/xmr.rs` for the network-gated tests. Left out on purpose: subaddresses, mempool receipts, additionally timelocked
+outputs, authenticated daemons, Monero's own 25-word seed format.
+
+**Still owed:** `data/generated-sources.json` must be regenerated on a Linux host
+(`scripts/flatpak-gen-sources.sh`) before an offline Flatpak build will succeed, and the
+Librem 5 checklist has new Monero boxes to run.
+
 ---
 
 ## Extended set (after MVP)

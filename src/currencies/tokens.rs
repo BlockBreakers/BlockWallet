@@ -162,6 +162,7 @@ impl Tokens {
         let eth_path = crate::configuration::paths::token_icon_path("ETH");
         let sol_path = crate::configuration::paths::token_icon_path("SOL");
         let ltc_path = crate::configuration::paths::token_icon_path("LTC");
+        let xmr_path = crate::configuration::paths::token_icon_path("XMR");
         let usdc_path = crate::configuration::paths::token_icon_path("USDC");
 
         let mut eth_tokens = HashMap::new();
@@ -185,6 +186,17 @@ impl Tokens {
                 logo: ltc_path,
                 decimals: 8,
                 chain: String::from("ltc"),
+            },
+        );
+        eth_tokens.insert(
+            String::from("xmr:XMR"),
+            Token {
+                name: String::from("Monero"),
+                symbol: String::from("XMR"),
+                address: String::from("xmr:native"),
+                logo: xmr_path,
+                decimals: 12,
+                chain: String::from("xmr"),
             },
         );
         eth_tokens.insert(

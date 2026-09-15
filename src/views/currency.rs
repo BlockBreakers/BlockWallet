@@ -15,6 +15,8 @@ use crate::currencies::eth_chain;
 use crate::currencies::ltc::LitecoinWallet;
 use crate::currencies::ltc_chain;
 use crate::currencies::sol::SolanaWallet;
+use crate::currencies::xmr::MoneroWallet;
+use crate::currencies::xmr_chain;
 use crate::ApplicationSettings;
 use crate::views::nav::{self, Nav};
 use crate::views::transactions;
@@ -84,6 +86,7 @@ pub fn currency_view(token: Token, app_settings: ApplicationSettings, nav: Optio
         "btc" => generate_btc_receive_box(&app_settings.btc_wallets),
         "sol" => generate_sol_receive_box(&app_settings.sol_wallets),
         "ltc" => generate_ltc_receive_box(&app_settings.ltc_wallets),
+        "xmr" => generate_xmr_receive_box(&app_settings.xmr_wallets),
         _ => generate_eth_receive_box(&app_settings.eth_wallets),
     };
 
@@ -160,7 +163,7 @@ pub fn currency_view(token: Token, app_settings: ApplicationSettings, nav: Optio
                 });
                 ui::set_notice_warning(&banner, offline);
                 if nav::label_is_pending_sync(&text) {
-                    balance_label.set_label("Syncing…");
+                    balance_label.set_label(&nav::sync_label(&text));
                 } else if is_btc {
                     balance_label.set_label(&nav::format_btc_units(&text, &units));
                 } else {
@@ -205,6 +208,13 @@ fn live_balance_label(token: &Token, app_settings: &ApplicationSettings) -> Stri
                 .map(|w| w.balance.lock().unwrap().clone())
                 .unwrap_or_else(|| "0 LTC".into());
         }
+        "xmr" => {
+            return app_settings
+                .xmr_wallets
+                .first()
+                .map(|w| w.balance.lock().unwrap().clone())
+                .unwrap_or_else(|| "0 XMR".into());
+        }
         _ => {}
     }
     if token.chain == "eth" && eth_chain::is_native_token(token) {
@@ -239,6 +249,10 @@ fn balance_watch_arc(token: &Token, app_settings: &ApplicationSettings) -> Arc<M
         }
     } else if token.chain == "ltc" {
         if let Some(w) = app_settings.ltc_wallets.first() {
+            return Arc::clone(&w.balance);
+        }
+    } else if token.chain == "xmr" {
+        if let Some(w) = app_settings.xmr_wallets.first() {
             return Arc::clone(&w.balance);
         }
     } else if token.chain == "eth" && eth_chain::is_native_token(token) {
@@ -285,6 +299,14 @@ pub fn get_transactions(token: Token, app_settings: ApplicationSettings) -> gtk:
                     ltc_chain::format_ltc(item.amount_sats.unsigned_abs())
                 };
                 entries.push((incoming, format!("{amount} LTC"), item.confirmations, item.txid.clone()));
+            }
+        }
+    } else if token.chain == "xmr" {
+        for xmrw in &app_settings.xmr_wallets {
+            for item in xmrw.history.lock().unwrap().iter() {
+                let incoming = item.amount_piconero >= 0;
+                let amount = xmr_chain::format_xmr(item.amount_piconero.unsigned_abs());
+                entries.push((incoming, format!("{amount} XMR"), item.confirmations, item.txid.clone()));
             }
         }
     } else {
@@ -473,6 +495,16 @@ pub fn generate_ltc_receive_box(ltc_wallets: &Vec<LitecoinWallet>) -> gtk::Box {
     receive_panel(
         "ltc",
         ltc_wallets
+            .iter()
+            .map(|w| (w.address.clone().unwrap_or_default(), w.generate_qr_address().ok()))
+            .collect(),
+    )
+}
+
+pub fn generate_xmr_receive_box(xmr_wallets: &Vec<MoneroWallet>) -> gtk::Box {
+    receive_panel(
+        "xmr",
+        xmr_wallets
             .iter()
             .map(|w| (w.address.clone().unwrap_or_default(), w.generate_qr_address().ok()))
             .collect(),

@@ -12,6 +12,7 @@ use crate::currencies::eth_chain;
 use crate::currencies::ltc_chain;
 use crate::currencies::sol_chain;
 use crate::currencies::tokens::Token;
+use crate::currencies::xmr_chain;
 use crate::views::ui;
 
 pub fn transaction_view(app_settings: ApplicationSettings, token: Token) -> (gtk::Box, ApplicationSettings) {
@@ -19,11 +20,12 @@ pub fn transaction_view(app_settings: ApplicationSettings, token: Token) -> (gtk
         "btc" => (btc_send_view(app_settings.clone()), app_settings),
         "sol" => (sol_send_view(app_settings.clone(), token), app_settings),
         "ltc" => (ltc_send_view(app_settings.clone()), app_settings),
+        "xmr" => (xmr_send_view(app_settings.clone()), app_settings),
         _ => (eth_send_view(app_settings.clone(), token), app_settings),
     }
 }
 
-/// The parts every send screen shares. Built once here so the four chains cannot drift
+/// The parts every send screen shares. Built once here so the five chains cannot drift
 /// apart visually, and so the confirmation gating is written in exactly one place.
 struct SendChrome {
     page: gtk::Box,
@@ -659,6 +661,231 @@ fn ltc_send_view(app_settings: ApplicationSettings) -> gtk::Box {
             let (sender, receiver) = crate::configuration::ui_channel::unbounded();
             thread::spawn(move || {
                 let result = ltc_chain::sign_and_broadcast(&private_key, &plan, &node, &network_name);
+                let _ = sender.send_blocking(result);
+            });
+            crate::configuration::ui_channel::attach(
+                receiver,
+                clone!(
+                    #[weak] status,
+                    #[upgrade_or]
+                    ControlFlow::Break,
+                    move |result| {
+                        match result {
+                            Ok(txid) => {
+                                status.set_label(&format!("Sent. Transaction ID: {txid}"));
+                                ui::set_notice_warning(&status, false);
+                                ui::toast("Transaction broadcast.");
+                            }
+                            Err(_) => {
+                                status.set_label(
+                                    "Broadcast failed. The node may be unreachable; your receive address is still valid offline.",
+                                );
+                                ui::set_notice_warning(&status, true);
+                            }
+                        }
+                        ControlFlow::Break
+                    }
+                ),
+            );
+        }
+    ));
+
+    scrolled(box_)
+}
+
+/// The keys a Monero send needs, taken from the account the user picked.
+///
+/// Unlike the other chains a Monero transaction cannot be built from an address: choosing
+/// inputs and computing their key images needs the spend key, and the change output needs
+/// the view key. The snapshot wipes both when it drops.
+fn xmr_sync_account(wallet: &crate::currencies::xmr::MoneroWallet) -> Option<xmr_chain::SyncAccount> {
+    Some(xmr_chain::SyncAccount {
+        spend_hex: wallet.private_key.clone()?,
+        view_hex: wallet.private_view_key.clone()?,
+        address: wallet.address.clone()?,
+        restore_height: wallet.restore_height,
+        birthday: wallet.birthday,
+    })
+}
+
+fn xmr_send_view(app_settings: ApplicationSettings) -> gtk::Box {
+    let xmr_mainnet = !xmr_chain::is_testnet(xmr_chain::parse_network(&app_settings.xmr_network));
+    let SendChrome {
+        page: box_,
+        form,
+        error,
+        review,
+        confirm_box,
+        summary,
+        confirm,
+        cancel,
+        ack,
+        spends_real_value,
+        network_note,
+        status,
+    } = send_chrome("xmr", xmr_mainnet, "I understand this spends real monero.");
+
+    let names: Vec<String> = app_settings
+        .xmr_wallets
+        .iter()
+        .map(|wallet| wallet.wallet_name.clone().unwrap_or_else(|| "Monero".to_string()))
+        .collect();
+    let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let from_row = ui::combo_row("From account", &name_refs);
+    let receive_address = ui::entry_row("Recipient");
+    let amount = ui::entry_row("Amount (XMR)");
+    // Monero's fee is a priority tier rather than a rate the user picks; the node quotes a
+    // per-byte figure for each tier and the wallet caps it.
+    let fee_row = ui::combo_row("Priority", &["Low", "Medium", "High"]);
+    fee_row.set_selected(1);
+
+    form.add(&from_row);
+    form.add(&receive_address);
+    form.add(&amount);
+    form.add(&fee_row);
+
+    let from_wallet = from_row.clone();
+    let fee = fee_row.clone();
+
+    let app_settings = Arc::new(Mutex::new(app_settings));
+    let prepared = Arc::new(Mutex::new(None::<xmr_chain::PreparedSend>));
+
+    let gate = ReviewGate::new(&confirm_box, &ack, &confirm, spends_real_value, &prepared);
+    gate.watch_entry(&receive_address);
+    gate.watch_entry(&amount);
+    gate.watch_combo(&fee_row);
+    gate.watch_combo(&from_row);
+
+    review.connect_clicked(clone!(
+        #[strong] app_settings,
+        #[strong] prepared,
+        #[strong] gate,
+        #[weak] receive_address,
+        #[weak] amount,
+        #[weak] fee,
+        #[weak] error,
+        #[weak] summary,
+        #[weak] from_wallet,
+        move |_| {
+            error.set_visible(false);
+            let settings = app_settings.lock().unwrap();
+            let index = from_wallet.selected() as usize;
+            let Some(wallet) = settings.xmr_wallets.get(index) else {
+                error.set_label("Select a Monero account.");
+                error.set_visible(true);
+                return;
+            };
+            let Some(account) = xmr_sync_account(wallet) else {
+                error.set_label("Wallet is locked.");
+                error.set_visible(true);
+                return;
+            };
+            let to = receive_address.text().to_string();
+            let network = xmr_chain::parse_network(&settings.xmr_network);
+            if let Err(err) = xmr_chain::validate_address(&to, network) {
+                error.set_label(&format!("{err:?}").replace("ERROR: ", "").replace('\"', ""));
+                error.set_visible(true);
+                return;
+            }
+            let node = settings.xmr_node.clone();
+            let network_name = settings.xmr_network.clone();
+            let testnet = xmr_chain::is_testnet(network);
+            drop(settings);
+
+            let labels = ["Low", "Medium", "High"];
+            let fee_label = labels
+                .get(fee.selected() as usize)
+                .copied()
+                .unwrap_or("Medium")
+                .to_string();
+            let amount_text = amount.text().to_string();
+            let (sender, receiver) = crate::configuration::ui_channel::unbounded();
+            thread::spawn(move || {
+                let result = xmr_chain::prepare_send(&account, &to, &amount_text, &node, &network_name, &fee_label);
+                let _ = sender.send_blocking(result);
+            });
+            crate::configuration::ui_channel::attach(
+                receiver,
+                clone!(
+                    #[weak] error,
+                    #[weak] summary,
+                    #[weak] network_note,
+                    #[strong] prepared,
+                    #[strong] gate,
+                    #[upgrade_or]
+                    ControlFlow::Break,
+                    move |result| {
+                        match result {
+                            Ok(plan) => {
+                                set_network_note(
+                                    &network_note,
+                                    testnet,
+                                    if testnet {
+                                        "Monero stagenet. These coins have no mainnet value."
+                                    } else {
+                                        "Mainnet. This spends real monero."
+                                    },
+                                );
+                                summary.set_label(&plan.summary());
+                                *prepared.lock().unwrap() = Some(plan);
+                                gate.arm();
+                            }
+                            Err(why) => {
+                                // Monero has more ways for a build to fail honestly than the
+                                // other chains (not synced yet, everything still in the
+                                // ten-block lock, decoys unavailable), so the reason is shown.
+                                let reason = format!("{why:?}").replace("ERROR: ", "").replace('\"', "");
+                                error.set_label(&format!("Could not build that transaction: {reason}. Receiving still works offline."));
+                                error.set_visible(true);
+                                gate.invalidate();
+                            }
+                        }
+                        ControlFlow::Break
+                    }
+                ),
+            );
+        }
+    ));
+
+    cancel.connect_clicked(clone!(
+        #[strong] gate,
+        move |_| gate.invalidate()
+    ));
+
+    confirm.connect_clicked(clone!(
+        #[strong] app_settings,
+        #[strong] prepared,
+        #[weak] error,
+        #[weak] status,
+        #[strong] gate,
+        #[weak] from_wallet,
+        move |_| {
+            let plan = match prepared.lock().unwrap().clone() {
+                Some(plan) => plan,
+                None => return,
+            };
+            let settings = app_settings.lock().unwrap();
+            let index = from_wallet.selected() as usize;
+            let Some(wallet) = settings.xmr_wallets.get(index) else {
+                return;
+            };
+            let Some(account) = xmr_sync_account(wallet) else {
+                error.set_label("Wallet is locked.");
+                error.set_visible(true);
+                return;
+            };
+            let node = settings.xmr_node.clone();
+            let network_name = settings.xmr_network.clone();
+            drop(settings);
+
+            error.set_visible(false);
+            status.set_label("Signing and broadcasting… Monero ring signatures take a few seconds.");
+            status.set_visible(true);
+            gate.invalidate();
+
+            let (sender, receiver) = crate::configuration::ui_channel::unbounded();
+            thread::spawn(move || {
+                let result = xmr_chain::sign_and_broadcast(&account, &plan, &node, &network_name);
                 let _ = sender.send_blocking(result);
             });
             crate::configuration::ui_channel::attach(

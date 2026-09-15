@@ -108,9 +108,10 @@ overwriting it — and, importantly, without sharing its wallet data directory.
 ### Release build
 
 Stores build with no network access, so every crate must be declared up front with a
-checksum. `data/generated-sources.json` holds that list (581 crates) and is committed.
-**Regenerate it whenever `Cargo.lock` changes**, or the offline build will fail on a
-missing or mismatched crate:
+checksum. `data/generated-sources.json` holds that list and is committed. **Regenerate it
+whenever `Cargo.lock` changes**, or the offline build will fail on a missing or mismatched
+crate. At the time of writing it is behind: the Monero crates (19 of them, all pure Rust) are
+in `Cargo.lock` but not yet in the list, so the next release build must start here:
 
 ```sh
 ./scripts/flatpak-gen-sources.sh      # rewrites data/generated-sources.json
