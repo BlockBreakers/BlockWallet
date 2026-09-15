@@ -95,6 +95,19 @@
     <content_attribute id="money-purchasing">intense</content_attribute>
   </content_rating>
   <releases>
+    <release version="0.3.0" type="development" date="2026-09-15">
+      <description>
+        <p>Monero joins Bitcoin, Ethereum, Solana and Litecoin as a fifth chain, derived from the same recovery phrase.</p>
+        <ul>
+          <li>Send and receive Monero. The wallet scans blocks on the device with the private view key, so the node you use learns nothing about your account from a sync.</li>
+          <li>A wallet created here scans from its own creation. A restored phrase or an imported spend key scans the last month by default, with a restore height in Settings for anything older.</li>
+          <li>Import a Monero account by its private spend key, and reveal the spend and view keys to move an account to another Monero wallet.</li>
+          <li>Stagenet is the Monero test network behind the existing Use test networks switch.</li>
+          <li>Fixed sync loops being duplicated each time Settings was left, which for Monero would have meant two scanners sharing one cache.</li>
+        </ul>
+        <p>Built and published without a run on the Librem 5. A stagenet send was built, signed, broadcast and reconciled from both ends on a desktop; nothing has moved on mainnet.</p>
+      </description>
+    </release>
     <release version="0.2.2" type="development" date="2026-08-27">
       <description>
         <p>A maintenance release: a swap-fee correctness fix and a payout update. The fee is still 1% everywhere it was already disclosed; only which venues actually charge it changes.</p>

@@ -14,23 +14,19 @@
   <img src="docs/screenshots/home-dark.png" alt="Home screen in dark mode" width="230">
 </p>
 
-**Status:** v0.2.2 is the current release, built from a pinned tag and distributed as a Flatpak
-bundle you install by hand. It is a maintenance release over v0.2.0 (a swap-fee correctness fix
-and a payout address update), with no UI or hardware-relevant code changed, so nothing new was
-run against the device for it. The last full [Librem 5 checklist](docs/LIBREM5.md) run was
-v0.1.0, which passed all 41 of its boxes on real hardware in August 2026. v0.2.0 was
-spot-checked on the same device rather than re-run end to end: it installs, launches, syncs
-against live nodes with the batched token read working, and renders a zero-balance wallet
-correctly. The rest of the checklist is owed.
+**Status:** v0.3.0 is the current release, built from a pinned tag and distributed as a Flatpak
+bundle you install by hand. It adds Monero as a fifth chain, and its bundles were built and
+published without a run on the phone: the last full [Librem 5 checklist](docs/LIBREM5.md)
+run was v0.1.0, which passed all 41 of its boxes on real hardware in August 2026, and v0.2.0
+was spot-checked on the same device (installs, launches, syncs against live nodes, renders a
+zero-balance wallet). The checklist, now with Monero boxes, is owed for this version.
 
-**Monero is new and unreleased.** It landed in September 2026 after v0.2.2 and has not been
-on the phone. What has been shown, against live public nodes from a desktop: syncing to the
-tip on mainnet and stagenet, recognising a real stagenet faucet payment and holding it locked
-for ten blocks, then spending it: a 0.01 XMR stagenet transaction (`226d2fe8…`, one input,
-fee 0.00003 XMR) built, signed and broadcast by this code, mined in block 2208289, seen by the
-recipient account and netted correctly by the sender with its change. Nothing has moved on
-mainnet. The network-gated tests in `tests/xmr.rs` are the record. The Flatpak's vendored source list has not been regenerated for the new crates,
-so an offline bundle build will fail until `scripts/flatpak-gen-sources.sh` is run on Linux.
+**What Monero has and has not shown.** Against live public nodes from a desktop: syncing to
+the tip on mainnet and stagenet, recognising a real stagenet faucet payment and holding it
+locked for ten blocks, then spending it: a 0.01 XMR stagenet transaction (`226d2fe8…`, one
+input, fee 0.00003 XMR) built, signed and broadcast by this code, mined in block 2208289,
+seen by the recipient account and netted correctly by the sender with its change. Nothing has
+moved on mainnet. The network-gated tests in `tests/xmr.rs` are the record.
 
 Known unproven areas, stated plainly rather than buried: cross-chain swaps have never moved
 real coins, because THORChain's global trading halt was in force for most of development and
@@ -85,7 +81,7 @@ flatpak remote-add --if-not-exists --user flathub \
 **4. Install and run.**
 
 ```sh
-flatpak install --user ./BlockWallet-v0.2.2-aarch64.flatpak
+flatpak install --user ./BlockWallet-v0.3.0-aarch64.flatpak
 flatpak run io.github.BlockBreakersHQ.BlockWallet
 ```
 

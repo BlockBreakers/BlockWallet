@@ -269,9 +269,8 @@ spending it in a transaction this code built and signed, which was mined and rec
 both ends. Nothing has moved on mainnet. See `tests/xmr.rs` for the network-gated tests. Left out on purpose: subaddresses, mempool receipts, additionally timelocked
 outputs, authenticated daemons, Monero's own 25-word seed format.
 
-**Still owed:** `data/generated-sources.json` must be regenerated on a Linux host
-(`scripts/flatpak-gen-sources.sh`) before an offline Flatpak build will succeed, and the
-Librem 5 checklist has new Monero boxes to run.
+**Still owed:** the Librem 5 checklist has new Monero boxes to run. Released as v0.3.0 on
+15 September 2026 without that run, which the README says.
 
 ---
 

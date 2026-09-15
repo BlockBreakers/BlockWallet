@@ -43,21 +43,21 @@
                     "//": "Source of the data files, and the commit each binary was built from.",
                     "type": "git",
                     "url": "https://github.com/BlockBreakersHQ/BlockWallet.git",
-                    "tag": "v0.2.2",
-                    "commit": "2cfeac320e9440204db9385f817b233c6248164a"
+                    "tag": "v0.3.0",
+                    "commit": "COMMIT_TBD"
                 },
                 {
                     "type": "file",
                     "only-arches": ["aarch64"],
-                    "url": "https://github.com/BlockBreakersHQ/BlockWallet/releases/download/v0.2.2/block_wallet-pureos-aarch64",
-                    "sha256": "b648b78ee0cdcba8360bbd686cdef2bb5d6534e819300913c4624066eafde3ec",
+                    "url": "https://github.com/BlockBreakersHQ/BlockWallet/releases/download/v0.3.0/block_wallet-pureos-aarch64",
+                    "sha256": "SHA_AARCH64_TBD",
                     "dest-filename": "block_wallet"
                 },
                 {
                     "type": "file",
                     "only-arches": ["x86_64"],
-                    "url": "https://github.com/BlockBreakersHQ/BlockWallet/releases/download/v0.2.2/block_wallet-pureos-x86_64",
-                    "sha256": "8a662473d783f7a99b29fa08af6d5292210caf0f62223f097cdc141a56001feb",
+                    "url": "https://github.com/BlockBreakersHQ/BlockWallet/releases/download/v0.3.0/block_wallet-pureos-x86_64",
+                    "sha256": "SHA_X86_64_TBD",
                     "dest-filename": "block_wallet"
                 }
             ]
