@@ -14,12 +14,12 @@
   <img src="docs/screenshots/home-dark.png" alt="Home screen in dark mode" width="230">
 </p>
 
-**Status:** v0.3.0 is the current release, built from a pinned tag and distributed as a Flatpak
-bundle you install by hand. It adds Monero as a fifth chain, and its bundles were built and
-published without a run on the phone: the last full [Librem 5 checklist](docs/LIBREM5.md)
+**Status:** v0.3.1 is the current release, built from a pinned tag and distributed as a Flatpak
+bundle you install by hand. It fixes fifteen bugs found in a code review of v0.3.0, which added
+Monero as a fifth chain. Neither release has been run on the phone: the last full [Librem 5 checklist](docs/LIBREM5.md)
 run was v0.1.0, which passed all 41 of its boxes on real hardware in August 2026, and v0.2.0
 was spot-checked on the same device (installs, launches, syncs against live nodes, renders a
-zero-balance wallet). The checklist, now with Monero boxes, is owed for this version.
+zero-balance wallet). The checklist, now with Monero boxes, is owed for these versions.
 
 **What Monero has and has not shown.** Against live public nodes from a desktop: syncing to
 the tip on mainnet and stagenet, recognising a real stagenet faucet payment and holding it
@@ -54,7 +54,7 @@ what the distribution ships and behaves the same on every PureOS release.
 
 The v0.2.0 bundle was verified on a Librem 5 running **PureOS 11 (Crimson)**, kernel
 6.12.0-1-librem5: it installs, appears in the Phosh app grid, and runs with no errors on
-stderr and a flat 57 MB resident. The v0.3.0 aarch64 bundle was built the same way, from the
+stderr and a flat 57 MB resident. The v0.3.1 aarch64 bundle was built the same way, from the
 tag with no network, but has not been on the phone yet; its x86_64 sibling was installed and
 launched on a desktop. Note that the bundle exercises the runtime's GTK 4.22, not Crimson's
 own 4.8.3. Those are separate code paths, and only the Flatpak one has been run on hardware.
@@ -83,7 +83,7 @@ flatpak remote-add --if-not-exists --user flathub \
 **4. Install and run.**
 
 ```sh
-flatpak install --user ./BlockWallet-v0.3.0-aarch64.flatpak
+flatpak install --user ./BlockWallet-v0.3.1-aarch64.flatpak
 flatpak run io.github.BlockBreakersHQ.BlockWallet
 ```
 
@@ -445,7 +445,7 @@ Progress and remaining work: [docs/ROADMAP.md](docs/ROADMAP.md).
 
 Every release is a pushed tag with a GitHub release behind it: `aarch64` (the Librem 5) and
 `x86_64` (desktop) Flatpak bundles, the two PureOS Store binaries, and a `SHA256SUMS`. The
-current one is `v0.3.0`; the device checklist is re-run against each release as hardware
+current one is `v0.3.1`; the device checklist is re-run against each release as hardware
 time allows, and the status at the top of this file says which have had it.
 
 ## License

@@ -95,6 +95,22 @@
     <content_attribute id="money-purchasing">intense</content_attribute>
   </content_rating>
   <releases>
+    <release version="0.3.1" type="development" date="2026-09-30">
+      <description>
+        <p>A bug-fix release. No new features.</p>
+        <ul>
+          <li>Sending: editing the amount while a review was loading could leave Confirm armed with the old amount. On BNB Smart Chain, the Low fee was rejected, and sending the bundled ETH token sent BNB instead.</li>
+          <li>Swapping: choosing a second offer now updates the review card, offers disappear when you change the amount, and a token swap now waits for its approval to confirm instead of failing.</li>
+          <li>THORChain, Maya and LI.FI quotes no longer fail because of a malformed request, and longer Litecoin swap memos are now encoded correctly.</li>
+          <li>Extra Solana accounts and imported Monero phrases keep their addresses after you lock and unlock.</li>
+          <li>Bitcoin accounts imported by WIF now show a balance and can send.</li>
+          <li>Revealing an imported key no longer shows the wallet's recovery phrase as its backup.</li>
+          <li>Turning off Use test networks now returns every chain to mainnet.</li>
+          <li>Leaving Settings no longer keeps an old, unlocked copy of the wallet in memory that could overwrite your accounts on exit.</li>
+        </ul>
+        <p>Built and published without a run on the Librem 5, and none of the fixes has moved real funds.</p>
+      </description>
+    </release>
     <release version="0.3.0" type="development" date="2026-09-15">
       <description>
         <p>Monero joins Bitcoin, Ethereum, Solana and Litecoin as a fifth chain, derived from the same recovery phrase.</p>
