@@ -1,6 +1,7 @@
 use adw::prelude::*;
 use adw::ApplicationWindow;
 use glib::{clone, ControlFlow};
+use std::cell::RefCell;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -8,7 +9,44 @@ use crate::configuration::application_settings::*;
 use crate::views::ui;
 use crate::views::{activity, assets, header_bar, home, login, trade, wallets};
 
+/// What a shell installs on its window. Each set captures that shell's own copy of the
+/// settings, so it must go when the shell does: left connected, an old copy stays unlocked in
+/// memory after Lock, and its close handler saves its out-of-date accounts over the store.
+struct ShellHooks {
+    window: glib::WeakRef<ApplicationWindow>,
+    close: glib::SignalHandlerId,
+    idle: glib::SourceId,
+    activity: gtk::EventControllerLegacy,
+}
+
+thread_local! {
+    static SHELL_HOOKS: RefCell<Vec<ShellHooks>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Detach the previous shell's hooks from `window`. Called whenever the shell is rebuilt or
+/// replaced by the lock screen.
+pub fn remove_shell_hooks(window: &ApplicationWindow) {
+    let stale: Vec<ShellHooks> = SHELL_HOOKS.with(|hooks| {
+        let (stale, keep): (Vec<_>, Vec<_>) = hooks
+            .borrow_mut()
+            .drain(..)
+            .partition(|h| h.window.upgrade().map_or(true, |w| &w == window));
+        *hooks.borrow_mut() = keep;
+        stale
+    });
+    for hooks in stale {
+        // A destroyed window's timer stops itself on its next tick, and removing a source that
+        // has gone panics, so only a live window's hooks are taken down here.
+        if let Some(owner) = hooks.window.upgrade() {
+            hooks.idle.remove();
+            owner.disconnect(hooks.close);
+            owner.remove_controller(&hooks.activity);
+        }
+    }
+}
+
 pub fn stack_view(window: &ApplicationWindow, app_settings_orig: ApplicationSettings) {
+    remove_shell_hooks(window);
     let app_settings = Arc::new(Mutex::new(app_settings_orig));
     app_settings.lock().unwrap().update_balances();
 
@@ -93,9 +131,9 @@ pub fn stack_view(window: &ApplicationWindow, app_settings_orig: ApplicationSett
             glib::Propagation::Proceed
         }
     ));
-    window.add_controller(activity);
+    window.add_controller(activity.clone());
 
-    glib::timeout_add_seconds_local(
+    let idle = glib::timeout_add_seconds_local(
         15,
         clone!(
             #[weak] window,
@@ -116,13 +154,17 @@ pub fn stack_view(window: &ApplicationWindow, app_settings_orig: ApplicationSett
         ),
     );
 
-    window.connect_close_request(clone!(
+    let close = window.connect_close_request(clone!(
         #[strong] app_settings,
         move |_| {
             let _ = app_settings.lock().unwrap().write_config();
             glib::Propagation::Proceed
         }
     ));
+
+    SHELL_HOOKS.with(|hooks| {
+        hooks.borrow_mut().push(ShellHooks { window: window.downgrade(), close, idle, activity });
+    });
 
     window.present();
 }

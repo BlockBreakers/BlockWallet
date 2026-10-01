@@ -508,9 +508,16 @@ fn placeholder_tx(num_inputs: usize, num_outputs: usize, memo_len: Option<usize>
 /// response also states. Over that the transaction is simply not relayed, which for a swap
 /// means the inbound payment never arrives.
 fn op_return_script(memo: &[u8]) -> ScriptBuf {
-    let mut bytes = Vec::with_capacity(memo.len() + 2);
-    bytes.push(0x6a); // OP_RETURN
-    bytes.push(memo.len() as u8); // direct push, valid for the <= 75 byte range we allow
+    const OP_RETURN: u8 = 0x6a;
+    const OP_PUSHDATA1: u8 = 0x4c;
+    let mut bytes = Vec::with_capacity(memo.len() + 3);
+    bytes.push(OP_RETURN);
+    // A bare length byte is only a push up to 75; from 76 it would be read as an opcode.
+    // Memos are capped at 80 bytes upstream, so OP_PUSHDATA1 covers the rest.
+    if memo.len() > 75 {
+        bytes.push(OP_PUSHDATA1);
+    }
+    bytes.push(memo.len() as u8);
     bytes.extend_from_slice(memo);
     ScriptBuf::from(bytes)
 }
@@ -712,6 +719,23 @@ pub fn sign_and_broadcast(
 mod tests {
     use super::*;
     use bdk_wallet::bitcoin::consensus::deserialize;
+
+    #[test]
+    fn op_return_carries_the_whole_memo_as_one_push_up_to_80_bytes() {
+        use bdk_wallet::bitcoin::script::Instruction;
+        for len in [1usize, 75, 76, 80] {
+            let memo = vec![b'='; len];
+            let script = op_return_script(&memo);
+            assert!(script.is_op_return(), "len {len}");
+            let pushes: Vec<_> = script.instructions().skip(1).collect::<Result<_, _>>().unwrap();
+            assert_eq!(pushes.len(), 1, "len {len}");
+            match &pushes[0] {
+                Instruction::PushBytes(bytes) => assert_eq!(bytes.as_bytes(), memo.as_slice(), "len {len}"),
+                other => panic!("len {len}: expected a push, got {other:?}"),
+            }
+            assert!(script.len() <= 83, "len {len}: over the relay limit");
+        }
+    }
 
     #[test]
     fn parses_networks_and_default_urls() {

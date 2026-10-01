@@ -46,6 +46,23 @@ fn electrum_client_for(url: &str) -> Result<BdkElectrumClient<electrum_client::C
     Ok(BdkElectrumClient::new(raw))
 }
 
+/// What a Bitcoin account signs with: a phrase under BIP84, or a single imported WIF key.
+/// Manual `Debug` so the secret never reaches a log line.
+#[derive(Clone)]
+pub enum BtcKey {
+    Seed { mnemonic: String, passphrase: String },
+    Wif(String),
+}
+
+impl std::fmt::Debug for BtcKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            BtcKey::Seed { .. } => "BtcKey::Seed(..)",
+            BtcKey::Wif(_) => "BtcKey::Wif(..)",
+        })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum BtcBackend {
     Esplora(String),
@@ -237,7 +254,19 @@ pub fn fee_rate_from_tier(tiers: &FeeTiers, label: &str) -> f32 {
     clamp_fee_rate(rate, fallback)
 }
 
-fn open_wallet(mnemonic: &str, passphrase: &str, network: Network) -> Result<Wallet, block_error::Error> {
+fn open_wallet(key: &BtcKey, network: Network) -> Result<Wallet, block_error::Error> {
+    match key {
+        BtcKey::Seed { mnemonic, passphrase } => open_seed_wallet(mnemonic, passphrase, network),
+        // Same descriptor the import builds, so the address synced and spent from is the one
+        // the account shows.
+        BtcKey::Wif(wif) => Wallet::create_single(format!("wpkh({})", wif.trim()))
+            .network(network)
+            .create_wallet_no_persist()
+            .map_err(|e| block_error::Error::new(format!("BDK wallet from WIF failed: {e:?}"))),
+    }
+}
+
+fn open_seed_wallet(mnemonic: &str, passphrase: &str, network: Network) -> Result<Wallet, block_error::Error> {
     let mnemonic = Mnemonic::parse_in(Language::English, mnemonic)
         .map_err(|e| block_error::Error::new(format!("Invalid mnemonic: {e:?}")))?;
     let pass = if passphrase.is_empty() {
@@ -321,14 +350,13 @@ fn collect_state(wallet: &mut Wallet) -> BtcSyncState {
 }
 
 pub fn sync_account(
-    mnemonic: &str,
-    passphrase: &str,
+    key: &BtcKey,
     network_name: &str,
     btc_node: &str,
 ) -> Result<BtcSyncState, block_error::Error> {
     let network = parse_network(network_name);
     let backend = parse_backend(btc_node, network);
-    let mut wallet = open_wallet(mnemonic, passphrase, network)?;
+    let mut wallet = open_wallet(key, network)?;
     sync_wallet(&mut wallet, &backend)?;
     Ok(collect_state(&mut wallet))
 }
@@ -388,15 +416,14 @@ fn finish_psbt(
 }
 
 pub fn prepare_send(
-    mnemonic: &str,
-    passphrase: &str,
+    key: &BtcKey,
     network_name: &str,
     btc_node: &str,
     to: &str,
     amount_sats: u64,
     fee_rate_sat_vb: f32,
 ) -> Result<PreparedSend, block_error::Error> {
-    prepare_send_with_memo(mnemonic, passphrase, network_name, btc_node, to, amount_sats, fee_rate_sat_vb, None)
+    prepare_send_with_memo(key, network_name, btc_node, to, amount_sats, fee_rate_sat_vb, None)
 }
 
 /// Build a payment that may carry a THORChain memo.
@@ -406,8 +433,7 @@ pub fn prepare_send(
 /// rather than getting a parallel implementation that could drift.
 #[allow(clippy::too_many_arguments)]
 pub fn prepare_send_with_memo(
-    mnemonic: &str,
-    passphrase: &str,
+    key: &BtcKey,
     network_name: &str,
     btc_node: &str,
     to: &str,
@@ -421,7 +447,7 @@ pub fn prepare_send_with_memo(
     let network = parse_network(network_name);
     let address = validate_address(to, network)?;
     let backend = parse_backend(btc_node, network);
-    let mut wallet = open_wallet(mnemonic, passphrase, network)?;
+    let mut wallet = open_wallet(key, network)?;
     let from = wallet
         .peek_address(KeychainKind::External, 0)
         .address
@@ -447,8 +473,7 @@ pub fn prepare_send_with_memo(
 }
 
 pub fn sign_and_broadcast(
-    mnemonic: &str,
-    passphrase: &str,
+    key: &BtcKey,
     network_name: &str,
     btc_node: &str,
     plan: &PreparedSend,
@@ -456,7 +481,7 @@ pub fn sign_and_broadcast(
     let network = parse_network(network_name);
     let address = validate_address(&plan.to, network)?;
     let backend = parse_backend(btc_node, network);
-    let mut wallet = open_wallet(mnemonic, passphrase, network)?;
+    let mut wallet = open_wallet(key, network)?;
     let from = wallet
         .peek_address(KeychainKind::External, 0)
         .address
@@ -578,12 +603,22 @@ mod tests {
     fn hd_wallet_opens_without_network_for_mainnet_and_testnet() {
         const ABANDON: &str =
             "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-        let main = open_wallet(ABANDON, "", Network::Bitcoin).unwrap();
+        let key = BtcKey::Seed { mnemonic: ABANDON.into(), passphrase: String::new() };
+        let main = open_wallet(&key, Network::Bitcoin).unwrap();
         let main_addr = main.peek_address(KeychainKind::External, 0).address.to_string();
         assert!(main_addr.starts_with("bc1q"), "{main_addr}");
-        let test = open_wallet(ABANDON, "", Network::Testnet).unwrap();
+        let test = open_wallet(&key, Network::Testnet).unwrap();
         let test_addr = test.peek_address(KeychainKind::External, 0).address.to_string();
         assert!(test_addr.starts_with("tb1q"), "{test_addr}");
+    }
+
+    #[test]
+    fn a_wif_account_opens_at_the_address_its_import_shows() {
+        const WIF: &str = "KwDiBf89QgGbjEhKnhXJuH7LrciVrZi3qYjgd9M7rFU73sVHnoWn";
+        let imported = crate::currencies::btc::BitcoinWallet::from_private_key(WIF).unwrap();
+        let wallet = open_wallet(&BtcKey::Wif(WIF.into()), Network::Bitcoin).unwrap();
+        let address = wallet.peek_address(KeychainKind::External, 0).address.to_string();
+        assert_eq!(Some(address), imported.address);
     }
 
     #[test]

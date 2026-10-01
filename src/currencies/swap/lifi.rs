@@ -171,7 +171,7 @@ impl SwapProvider for LiFi {
             String::new()
         };
         let url = format!(
-            "{API}?fromChain={chain_id}&toChain={chain_id}&fromToken={}&toToken={}
+            "{API}?fromChain={chain_id}&toChain={chain_id}&fromToken={}&toToken={}\
              &fromAddress={}&toAddress={}&fromAmount={}&slippage={}{fee_param}",
             token_param(&request.from),
             token_param(&request.to),

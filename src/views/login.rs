@@ -106,6 +106,7 @@ fn build_login_view(window: ApplicationWindow, app_settings: ApplicationSettings
     login_box.append(&header);
     login_box.append(&ui::scroller(&clamp));
 
+    stack::remove_shell_hooks(&window);
     window.set_content(Some(&ui::with_toasts(&login_box)));
     if present {
         window.present();

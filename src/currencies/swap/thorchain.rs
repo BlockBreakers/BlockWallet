@@ -413,7 +413,7 @@ impl SwapProvider for ThorChain {
             String::new()
         };
         let url = format!(
-            "{base}/{}/quote/swap?from_asset={from_asset}&to_asset={to_asset}
+            "{base}/{}/quote/swap?from_asset={from_asset}&to_asset={to_asset}\
              &amount={thor_amount}&destination={}&liquidity_tolerance_bps={tolerance}{affiliate}",
             venue.api,
             request.destination.trim()

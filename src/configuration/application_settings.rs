@@ -443,9 +443,18 @@ impl ApplicationSettings {
     pub fn apply_eth_network(&mut self, name: &str) {
         let network = crate::currencies::eth_chain::parse_network(name);
         self.eth_network = crate::currencies::eth_chain::network_name(network).to_string();
-        // Drop the previous network's bundled tokens (but keep anything the user added
-        // themselves) so switching networks can't leave a stale contract address sitting in
-        // the registry under a reused symbol key, e.g. "eth:USDC" pointing at the wrong chain.
+        self.drop_eth_registry_tokens();
+        crate::currencies::eth_chain::apply_bundled_tokens(&mut self.tokens, network);
+        self.apply_custom_tokens();
+        for wallet in &mut self.eth_wallets {
+            wallet.erc20_balances.lock().unwrap().clear();
+        }
+    }
+
+    /// Drop every EVM token except the ones the user added themselves, so the next bundled
+    /// list lands on a clean registry. Otherwise a stale contract address survives under a
+    /// reused symbol key, e.g. "eth:USDC" pointing at the wrong chain.
+    fn drop_eth_registry_tokens(&mut self) {
         let custom_eth_symbols: std::collections::HashSet<String> = self
             .custom_tokens
             .iter()
@@ -455,11 +464,6 @@ impl ApplicationSettings {
         self.tokens.eth_tokens.retain(|key, token| {
             !(token.chain == "eth" && key.starts_with("eth:") && !custom_eth_symbols.contains(&token.symbol))
         });
-        crate::currencies::eth_chain::apply_bundled_tokens(&mut self.tokens, network);
-        self.apply_custom_tokens();
-        for wallet in &mut self.eth_wallets {
-            wallet.erc20_balances.lock().unwrap().clear();
-        }
     }
 
     pub fn apply_sol_network(&mut self, name: &str) {
@@ -597,7 +601,7 @@ impl ApplicationSettings {
         for wallet in &self.btc_wallets {
             if wallet.address.as_deref() == Some(address) {
                 return (
-                    wallet.mnemonic.clone().or_else(|| self.mnemonic.clone()),
+                    wallet.mnemonic.clone(),
                     wallet.private_key.clone(),
                 );
             }
@@ -605,7 +609,7 @@ impl ApplicationSettings {
         for wallet in &self.eth_wallets {
             if wallet.address.as_deref() == Some(address) {
                 return (
-                    wallet.mnemonic.clone().or_else(|| self.mnemonic.clone()),
+                    wallet.mnemonic.clone(),
                     wallet.private_key.clone(),
                 );
             }
@@ -613,7 +617,7 @@ impl ApplicationSettings {
         for wallet in &self.sol_wallets {
             if wallet.address.as_deref() == Some(address) {
                 return (
-                    wallet.mnemonic.clone().or_else(|| self.mnemonic.clone()),
+                    wallet.mnemonic.clone(),
                     wallet.private_key.clone(),
                 );
             }
@@ -621,7 +625,7 @@ impl ApplicationSettings {
         for wallet in &self.ltc_wallets {
             if wallet.address.as_deref() == Some(address) {
                 return (
-                    wallet.mnemonic.clone().or_else(|| self.mnemonic.clone()),
+                    wallet.mnemonic.clone(),
                     wallet.private_key.clone(),
                 );
             }
@@ -635,7 +639,7 @@ impl ApplicationSettings {
                     (Some(spend), None) => Some(spend.clone()),
                     _ => None,
                 };
-                return (wallet.mnemonic.clone().or_else(|| self.mnemonic.clone()), keys);
+                return (wallet.mnemonic.clone(), keys);
             }
         }
         (None, None)
@@ -764,6 +768,7 @@ impl ApplicationSettings {
         if self.sol_wallets.is_empty() {
             self.sol_wallets.push(seed::solana_from_seed(
                 &phrase,
+                seed::SOL_PATH,
                 &passphrase,
                 "Solana",
             )?);
@@ -909,12 +914,6 @@ impl ApplicationSettings {
     }
 
     fn apply_payload(&mut self, payload: PayloadV1) -> Result<(), block_error::Error> {
-        self.starred.clear();
-        for symbol in payload.settings.starred {
-            if let Some((key, token)) = self.tokens.eth_tokens.iter().find(|(_, token)| token.symbol == symbol) {
-                self.starred.insert(key.clone(), token.clone());
-            }
-        }
         self.infura_key = payload.settings.infura_key;
         self.etherscan_key = payload.settings.etherscan_key;
         self.btc_node = payload.settings.btc_node;
@@ -969,15 +968,26 @@ impl ApplicationSettings {
         if !payload.settings.btc_units.is_empty() {
             self.btc_units = payload.settings.btc_units;
         }
-        crate::currencies::eth_chain::apply_bundled_tokens(
-            &mut self.tokens,
-            crate::currencies::eth_chain::parse_network(&self.eth_network),
-        );
+        // The registry starts out holding mainnet's tokens. On any other network those
+        // contracts do not exist or are something else, so they go, exactly as on a switch.
+        let eth_network = crate::currencies::eth_chain::parse_network(&self.eth_network);
+        if eth_network != crate::currencies::eth_chain::EthNetwork::Mainnet {
+            self.drop_eth_registry_tokens();
+        }
+        crate::currencies::eth_chain::apply_bundled_tokens(&mut self.tokens, eth_network);
         crate::currencies::sol_chain::apply_bundled_tokens(
             &mut self.tokens,
             crate::currencies::sol_chain::parse_network(&self.sol_network),
         );
         self.apply_custom_tokens();
+        // Resolved against the finished registry, so a star follows the token on this
+        // network rather than a mainnet entry that was about to be dropped.
+        self.starred.clear();
+        for symbol in payload.settings.starred {
+            if let Some((key, token)) = self.tokens.eth_tokens.iter().find(|(_, token)| token.symbol == symbol) {
+                self.starred.insert(key.clone(), token.clone());
+            }
+        }
 
         self.mnemonic = match payload.mnemonic.as_ref().filter(|value| !value.is_empty()) {
             Some(phrase) => Some(seed::parse_mnemonic(phrase)?),
@@ -998,7 +1008,8 @@ impl ApplicationSettings {
                 .filter(|value| !value.is_empty())
                 .unwrap_or(seed_passphrase.as_str());
             let mut wallet = if let Some(mnemonic) = record.mnemonic.as_ref().filter(|value| !value.is_empty()) {
-                BitcoinWallet::from_mnemonic_on(mnemonic, record_passphrase, btc_network)?
+                let pass = own_phrase_passphrase(mnemonic, record.passphrase.as_deref(), self.mnemonic.as_deref(), &seed_passphrase);
+                BitcoinWallet::from_mnemonic_on(mnemonic, &pass, btc_network)?
             } else if let Some(wif) = record.private_key_wif.as_ref().filter(|value| !value.is_empty()) {
                 BitcoinWallet::from_private_key(wif)?
             } else if let Some(phrase) = self.mnemonic.clone() {
@@ -1070,7 +1081,7 @@ impl ApplicationSettings {
             } else if let Some(key) = record.private_key.as_ref().filter(|value| !value.is_empty()) {
                 SolanaWallet::from_private_key(key)?
             } else if let Some(phrase) = self.mnemonic.clone() {
-                seed::solana_from_seed(&phrase, &seed_passphrase, &record.name)?
+                seed::solana_from_seed(&phrase, &path, &seed_passphrase, &record.name)?
             } else {
                 continue;
             };
@@ -1083,6 +1094,7 @@ impl ApplicationSettings {
             if let Some(phrase) = self.mnemonic.clone() {
                 self.sol_wallets.push(seed::solana_from_seed(
                     &phrase,
+                    seed::SOL_PATH,
                     &seed_passphrase,
                     "Solana",
                 )?);
@@ -1098,7 +1110,8 @@ impl ApplicationSettings {
                 .filter(|value| !value.is_empty())
                 .unwrap_or(seed_passphrase.as_str());
             let mut wallet = if let Some(mnemonic) = record.mnemonic.as_ref().filter(|value| !value.is_empty()) {
-                LitecoinWallet::from_mnemonic_on(mnemonic, record_passphrase, ltc_network)?
+                let pass = own_phrase_passphrase(mnemonic, record.passphrase.as_deref(), self.mnemonic.as_deref(), &seed_passphrase);
+                LitecoinWallet::from_mnemonic_on(mnemonic, &pass, ltc_network)?
             } else if let Some(wif) = record.private_key_wif.as_ref().filter(|value| !value.is_empty()) {
                 LitecoinWallet::from_private_key(wif)?
             } else if let Some(phrase) = self.mnemonic.clone() {
@@ -1131,7 +1144,8 @@ impl ApplicationSettings {
                 .filter(|value| !value.is_empty())
                 .unwrap_or(seed_passphrase.as_str());
             let mut wallet = if let Some(mnemonic) = record.mnemonic.as_ref().filter(|value| !value.is_empty()) {
-                MoneroWallet::from_mnemonic_on(mnemonic, record_passphrase, xmr_network)?
+                let pass = own_phrase_passphrase(mnemonic, record.passphrase.as_deref(), self.mnemonic.as_deref(), &seed_passphrase);
+                MoneroWallet::from_mnemonic_on(mnemonic, &pass, xmr_network)?
             } else if let Some(key) = record.private_spend_key.as_ref().filter(|value| !value.is_empty()) {
                 MoneroWallet::from_private_key_on(key, xmr_network, record.restore_height)?
             } else if let Some(phrase) = self.mnemonic.clone() {
@@ -1192,8 +1206,7 @@ impl ApplicationSettings {
         for i in 0..self.btc_wallets.len() {
             let btc_balance_arc = Arc::clone(&self.btc_wallets[i].balance);
             let history_arc = Arc::clone(&self.btc_wallets[i].history);
-            let mnemonic = self.btc_wallets[i].mnemonic.clone().unwrap_or_default();
-            let passphrase = self.btc_wallets[i].password.clone().unwrap_or_default();
+            let key = self.btc_wallets[i].signing_key();
             let network = self.btc_network.clone();
             let btc_node = self.btc_node.clone();
             let epoch = Arc::clone(&self.sync_epoch);
@@ -1214,15 +1227,14 @@ impl ApplicationSettings {
                     else {
                         thread::sleep(Duration::from_secs(BTC_SYNC_INTERVAL_SECS));
                     }
-                    if mnemonic.is_empty() {
+                    let Some(key) = key.as_ref() else {
                         if sender.send_blocking(String::from("Uninitialized")).is_err() {
                             break;
                         }
                         continue;
-                    }
-                    let label = match BitcoinWallet::sync_from_seed(
-                        &mnemonic,
-                        &passphrase,
+                    };
+                    let label = match crate::currencies::btc_chain::sync_account(
+                        key,
                         &network,
                         &btc_node,
                     ) {
@@ -1606,6 +1618,22 @@ impl ApplicationSettings {
                 ),
             );
         }
+    }
+}
+
+/// Passphrase for re-deriving a record that carries its own phrase. The store passphrase
+/// belongs to the store phrase alone: an imported phrase was derived with its own passphrase
+/// or with none, and borrowing the store's would rebuild it as a different account.
+fn own_phrase_passphrase(
+    phrase: &str,
+    own: Option<&str>,
+    store_phrase: Option<&str>,
+    store_passphrase: &str,
+) -> String {
+    match own.filter(|value| !value.is_empty()) {
+        Some(value) => value.to_string(),
+        None if store_phrase == Some(phrase) => store_passphrase.to_string(),
+        None => String::new(),
     }
 }
 
@@ -2051,7 +2079,8 @@ mod tests {
             .unwrap();
         assert!(settings.xmr_wallets[0].birthday.is_some(), "generated here");
 
-        let spend = "3b094ca7218f175e91fa2402b4ae239a2fe8262792a3e718533a1a357a1e4109";
+        // Not the ABANDON account's own spend key, so this is a genuinely separate account.
+        let spend = "4242424242424242424242424242424242424242424242424242424242424202";
         let mut imported = xmr::generate_from_private_key(spend, Some(2_500_000)).unwrap();
         imported.set_wallet_name("Cold".to_string());
         let imported_address = imported.address.clone().unwrap();
@@ -2065,7 +2094,7 @@ mod tests {
         assert!(payload.xmr[1].mnemonic.is_none());
 
         let (phrase, keys) = settings.secrets_for_address(&imported_address);
-        assert_eq!(phrase.as_deref(), Some(ABANDON), "the reveal falls back to the store phrase");
+        assert!(phrase.is_none(), "the store phrase cannot restore an imported key, so it is not offered as its backup");
         let keys = keys.unwrap();
         assert!(keys.starts_with(spend));
         assert!(keys.contains("View key: "));

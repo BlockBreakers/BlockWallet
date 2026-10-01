@@ -18,9 +18,8 @@ use crate::currencies::swap::{solana_tx, SwapExecution, SwapQuote, SwapRequest};
 /// Passed in rather than reached for, so the secrets live for exactly as long as this call and
 /// the caller decides where they come from.
 pub struct SigningContext {
-    /// BIP39 phrase for the Bitcoin account, which BDK re-derives from.
-    pub btc_mnemonic: Option<String>,
-    pub btc_passphrase: String,
+    /// Key for the Bitcoin account, which BDK re-derives from.
+    pub btc_key: Option<crate::currencies::btc_chain::BtcKey>,
     /// WIF for the Litecoin account.
     pub ltc_private_key: Option<String>,
     /// Hex key for the Ethereum account.
@@ -50,6 +49,10 @@ pub struct SwapReceipt {
     /// Whether settlement is still pending on the other chain.
     pub pending_cross_chain: bool,
 }
+
+/// Long enough for a congested mainnet block or two; past this the user is better told than
+/// left watching "Signing and broadcasting…".
+const APPROVAL_CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
 
 fn missing_key(chain: &str) -> block_error::Error {
     block_error::Error::new(format!("{chain} account is locked or has no key in memory"))
@@ -110,9 +113,9 @@ fn execute_utxo(
     match quote.from.chain.as_str() {
         "btc" => {
             use crate::currencies::btc_chain;
-            let mnemonic = context
-                .btc_mnemonic
-                .as_deref()
+            let key = context
+                .btc_key
+                .as_ref()
                 .ok_or_else(|| missing_key("Bitcoin"))?;
             // The provider's recommended rate still passes through the wallet's own fee
             // ceiling rather than being taken at face value.
@@ -122,8 +125,7 @@ fn execute_utxo(
                 .unwrap_or_else(|| btc_chain::fee_rate_from_tier(&tiers, "medium"));
 
             let plan = btc_chain::prepare_send_with_memo(
-                mnemonic,
-                &context.btc_passphrase,
+                key,
                 &context.btc_network,
                 &context.btc_node,
                 vault,
@@ -132,8 +134,7 @@ fn execute_utxo(
                 Some(memo),
             )?;
             let txid = btc_chain::sign_and_broadcast(
-                mnemonic,
-                &context.btc_passphrase,
+                key,
                 &context.btc_network,
                 &context.btc_node,
                 &plan,
@@ -230,6 +231,22 @@ fn execute_evm(
                 &context.eth_network,
                 &context.infura_key,
             )?;
+            // The swap is only sent once the allowance is actually on chain. Sending it
+            // straight away would race the approval for the same nonce, and a swap mined
+            // after a reverted approval would itself revert and burn its gas.
+            eth_chain::wait_for_success(
+                &txid,
+                &context.eth_node,
+                &context.eth_network,
+                &context.infura_key,
+                APPROVAL_CONFIRM_TIMEOUT,
+            )
+            .map_err(|why| {
+                block_error::Error::new(format!(
+                    "the approval {txid} did not confirm ({why}), so the swap was not sent. \
+                     Once it confirms, find a new rate and swap again"
+                ))
+            })?;
             approval_txid = Some(txid);
         }
     }
@@ -293,8 +310,7 @@ mod tests {
 
     fn context() -> SigningContext {
         SigningContext {
-            btc_mnemonic: None,
-            btc_passphrase: String::new(),
+            btc_key: None,
             ltc_private_key: None,
             eth_private_key: None,
             sol_private_key: None,

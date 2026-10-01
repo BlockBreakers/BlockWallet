@@ -2,6 +2,7 @@ use adw::prelude::*;
 use glib::{clone, ControlFlow};
 use gtk::{Button, Orientation};
 use pango::WrapMode;
+use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -158,6 +159,9 @@ struct ReviewGate {
     /// Type-erased `*prepared.lock() = None`, so one gate serves all four chains despite
     /// each having its own `PreparedSend`.
     discard_plan: Rc<dyn Fn()>,
+    /// Bumped on every invalidation. A prepare that finishes after the form changed carries
+    /// an older ticket and is dropped, or it would re-arm Confirm with a plan for the old inputs.
+    generation: Rc<Cell<u64>>,
 }
 
 impl ReviewGate {
@@ -175,7 +179,19 @@ impl ReviewGate {
             confirm: confirm.downgrade(),
             spends_real_value,
             discard_plan: Rc::new(move || *slot.lock().unwrap() = None),
+            generation: Rc::new(Cell::new(0)),
         }
+    }
+
+    /// Start a new prepare: tear down any card on screen and return the ticket its result
+    /// must present to `is_current`.
+    fn begin(&self) -> u64 {
+        self.invalidate();
+        self.generation.get()
+    }
+
+    fn is_current(&self, ticket: u64) -> bool {
+        self.generation.get() == ticket
     }
 
     /// Reset the gate to its just-built state. `set_active(false)` only emits `toggled` when
@@ -201,6 +217,7 @@ impl ReviewGate {
     /// Something the plan was derived from changed, so the plan no longer describes what the
     /// user can see. Drop it and hide the card.
     fn invalidate(&self) {
+        self.generation.set(self.generation.get().wrapping_add(1));
         (self.discard_plan)();
         self.rearm_ack();
         if let Some(confirm_box) = self.confirm_box.upgrade() {
@@ -301,6 +318,7 @@ fn btc_send_view(app_settings: ApplicationSettings) -> gtk::Box {
         #[weak] from_wallet,
         move |_| {
             error.set_visible(false);
+            let ticket = gate.begin();
             let settings = app_settings.lock().unwrap();
             let index = from_wallet.selected() as usize;
             let Some(wallet) = settings.btc_wallets.get(index) else {
@@ -308,12 +326,11 @@ fn btc_send_view(app_settings: ApplicationSettings) -> gtk::Box {
                 error.set_visible(true);
                 return;
             };
-            let Some(mnemonic) = wallet.mnemonic.clone() else {
-                error.set_label("This account has no recovery phrase in memory. Unlock again.");
+            let Some(key) = wallet.signing_key() else {
+                error.set_label("This account has no key in memory. Unlock again.");
                 error.set_visible(true);
                 return;
             };
-            let passphrase = wallet.password.clone().unwrap_or_default();
             let to = receive_address.text().to_string();
             let network = crate::currencies::btc_chain::parse_network(&settings.btc_network);
             if let Err(err) = btc_chain::validate_address(&to, network) {
@@ -350,8 +367,7 @@ fn btc_send_view(app_settings: ApplicationSettings) -> gtk::Box {
                 let tiers = btc_chain::fetch_fee_tiers(&node, &network_name);
                 let fee_rate = btc_chain::fee_rate_from_tier(&tiers, &fee_label);
                 let result = btc_chain::prepare_send(
-                    &mnemonic,
-                    &passphrase,
+                    &key,
                     &network_name,
                     &node,
                     &to,
@@ -371,6 +387,9 @@ fn btc_send_view(app_settings: ApplicationSettings) -> gtk::Box {
                     #[upgrade_or]
                     ControlFlow::Break,
                     move |result| {
+                        if !gate.is_current(ticket) {
+                            return ControlFlow::Break;
+                        }
                         match result {
                             Ok(plan) => {
                                 set_network_note(
@@ -421,12 +440,11 @@ fn btc_send_view(app_settings: ApplicationSettings) -> gtk::Box {
             let Some(wallet) = settings.btc_wallets.get(index) else {
                 return;
             };
-            let Some(mnemonic) = wallet.mnemonic.clone() else {
+            let Some(key) = wallet.signing_key() else {
                 error.set_label("Wallet is locked.");
                 error.set_visible(true);
                 return;
             };
-            let passphrase = wallet.password.clone().unwrap_or_default();
             let node = settings.btc_node.clone();
             let network_name = settings.btc_network.clone();
             drop(settings);
@@ -441,8 +459,7 @@ fn btc_send_view(app_settings: ApplicationSettings) -> gtk::Box {
             let (sender, receiver) = crate::configuration::ui_channel::unbounded();
             thread::spawn(move || {
                 let result = btc_chain::sign_and_broadcast(
-                    &mnemonic,
-                    &passphrase,
+                    &key,
                     &network_name,
                     &node,
                     &plan,
@@ -542,6 +559,7 @@ fn ltc_send_view(app_settings: ApplicationSettings) -> gtk::Box {
         #[weak] from_wallet,
         move |_| {
             error.set_visible(false);
+            let ticket = gate.begin();
             let settings = app_settings.lock().unwrap();
             let index = from_wallet.selected() as usize;
             let Some(wallet) = settings.ltc_wallets.get(index) else {
@@ -594,6 +612,9 @@ fn ltc_send_view(app_settings: ApplicationSettings) -> gtk::Box {
                     #[upgrade_or]
                     ControlFlow::Break,
                     move |result| {
+                        if !gate.is_current(ticket) {
+                            return ControlFlow::Break;
+                        }
                         match result {
                             Ok(plan) => {
                                 set_network_note(
@@ -768,6 +789,7 @@ fn xmr_send_view(app_settings: ApplicationSettings) -> gtk::Box {
         #[weak] from_wallet,
         move |_| {
             error.set_visible(false);
+            let ticket = gate.begin();
             let settings = app_settings.lock().unwrap();
             let index = from_wallet.selected() as usize;
             let Some(wallet) = settings.xmr_wallets.get(index) else {
@@ -815,6 +837,9 @@ fn xmr_send_view(app_settings: ApplicationSettings) -> gtk::Box {
                     #[upgrade_or]
                     ControlFlow::Break,
                     move |result| {
+                        if !gate.is_current(ticket) {
+                            return ControlFlow::Break;
+                        }
                         match result {
                             Ok(plan) => {
                                 set_network_note(
@@ -987,7 +1012,7 @@ fn eth_send_view(app_settings: ApplicationSettings, token: Token) -> gtk::Box {
         #[weak] from_wallet,
         move |_| {
             error.set_visible(false);
-            gate.invalidate();
+            let ticket = gate.begin();
             let settings = app_settings.lock().unwrap();
             let index = from_wallet.selected() as usize;
             let Some(wallet) = settings.eth_wallets.get(index) else {
@@ -1061,6 +1086,9 @@ fn eth_send_view(app_settings: ApplicationSettings, token: Token) -> gtk::Box {
                     #[upgrade_or]
                     ControlFlow::Break,
                     move |result| {
+                        if !gate.is_current(ticket) {
+                            return ControlFlow::Break;
+                        }
                         match result {
                             Ok(plan) => {
                                 set_network_note(
@@ -1237,7 +1265,7 @@ fn sol_send_view(app_settings: ApplicationSettings, token: Token) -> gtk::Box {
         #[weak] from_wallet,
         move |_| {
             error.set_visible(false);
-            gate.invalidate();
+            let ticket = gate.begin();
             let settings = app_settings.lock().unwrap();
             let index = from_wallet.selected() as usize;
             let Some(wallet) = settings.sol_wallets.get(index) else {
@@ -1284,6 +1312,9 @@ fn sol_send_view(app_settings: ApplicationSettings, token: Token) -> gtk::Box {
                     #[upgrade_or]
                     ControlFlow::Break,
                     move |result| {
+                        if !gate.is_current(ticket) {
+                            return ControlFlow::Break;
+                        }
                         match result {
                             Ok(plan) => {
                                 set_network_note(

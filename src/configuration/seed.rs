@@ -72,8 +72,14 @@ pub fn ethereum_from_seed(
     Ok(wallet)
 }
 
-pub fn solana_from_seed(mnemonic: &str, passphrase: &str, name: &str) -> Result<SolanaWallet, block_error::Error> {
-    let mut wallet = SolanaWallet::from_mnemonic(mnemonic, SOL_PATH, passphrase)?;
+pub fn solana_from_seed(
+    mnemonic: &str,
+    path: &str,
+    passphrase: &str,
+    name: &str,
+) -> Result<SolanaWallet, block_error::Error> {
+    let path = if path.is_empty() { SOL_PATH } else { path };
+    let mut wallet = SolanaWallet::from_mnemonic(mnemonic, path, passphrase)?;
     if !name.is_empty() {
         wallet.set_wallet_name(name.to_string());
     }
@@ -129,7 +135,7 @@ pub fn accounts_from_seed_on(
     let phrase = parse_mnemonic(mnemonic)?;
     let btc = bitcoin_from_seed_on(&phrase, passphrase, "Bitcoin", network)?;
     let eth = ethereum_from_seed(&phrase, ETH_PATH, passphrase, "Ethereum")?;
-    let sol = solana_from_seed(&phrase, passphrase, "Solana")?;
+    let sol = solana_from_seed(&phrase, SOL_PATH, passphrase, "Solana")?;
     let ltc_network = match network {
         bdk_wallet::bitcoin::Network::Bitcoin => LtcNetwork::Mainnet,
         _ => LtcNetwork::Testnet,

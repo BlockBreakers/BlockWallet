@@ -524,6 +524,15 @@ fn network_settings(page: &adw::PreferencesPage, app_settings: Arc<Mutex<Applica
             ltc_network.set_selected(1);
             xmr_network.set_selected(1);
         } else {
+            // Leaving test mode. The switch put every dropdown on its test network (index 1),
+            // so any still there goes back to mainnet; one the user moved elsewhere is kept.
+            if app_settings.lock().unwrap().is_test_mode() {
+                for row in [&btc_network, &eth_network, &sol_network, &ltc_network, &xmr_network] {
+                    if row.selected() == 1 {
+                        row.set_selected(0);
+                    }
+                }
+            }
             let selected_eth = ETH_NETWORKS
                 .get(eth_network.selected() as usize)
                 .unwrap_or(&"mainnet");

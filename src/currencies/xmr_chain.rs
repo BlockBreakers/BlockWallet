@@ -1354,15 +1354,19 @@ pub fn sign_and_broadcast(
     let nodes = resolve_nodes(xmr_node, network);
     let broadcast_height = block_on(async {
         let (daemon, _) = connect(&nodes).await?;
+        // Read before publishing. Once the transaction is out, nothing may fail this call, or
+        // the UI reports a failed send for coins that have already left and the inputs are
+        // never marked spent.
+        let height = daemon
+            .latest_block_number()
+            .await
+            .map(|n| n as u64 + 1)
+            .map_err(|e| block_error::Error::new(format!("could not read chain height: {e}")))?;
         daemon
             .publish_transaction(&tx)
             .await
             .map_err(|e| block_error::Error::new(format!("broadcast failed: {e}")))?;
-        daemon
-            .latest_block_number()
-            .await
-            .map(|n| n as u64 + 1)
-            .map_err(|e| block_error::Error::new(format!("could not read chain height: {e}")))
+        Ok::<u64, block_error::Error>(height)
     })??;
 
     // Mark the inputs spent now, so a second send before the next sync cannot pick them

@@ -14,7 +14,7 @@ use adw::prelude::*;
 use glib::{clone, ControlFlow};
 use gtk::{Button, Orientation};
 use pango::WrapMode;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -75,12 +75,7 @@ fn fee_payout(settings: &ApplicationSettings) -> swap::FeePayout {
 
 fn signing_context(settings: &ApplicationSettings) -> SigningContext {
     SigningContext {
-        btc_mnemonic: settings.btc_wallets.first().and_then(|w| w.mnemonic.clone()),
-        btc_passphrase: settings
-            .btc_wallets
-            .first()
-            .and_then(|w| w.password.clone())
-            .unwrap_or_default(),
+        btc_key: settings.btc_wallets.first().and_then(|w| w.signing_key()),
         ltc_private_key: settings.ltc_wallets.first().and_then(|w| w.private_key.clone()),
         eth_private_key: settings.eth_wallets.first().and_then(|w| w.private_key.clone()),
         sol_private_key: settings.sol_wallets.first().and_then(|w| w.private_key.clone()),
@@ -110,9 +105,19 @@ fn signing_context(settings: &ApplicationSettings) -> SigningContext {
 #[derive(Clone)]
 struct SwapGate {
     review_card: glib::WeakRef<gtk::Box>,
+    custody_note: glib::WeakRef<gtk::Label>,
+    summary: glib::WeakRef<gtk::Label>,
+    offers_box: glib::WeakRef<gtk::Box>,
+    status: glib::WeakRef<gtk::Label>,
     ack: glib::WeakRef<gtk::CheckButton>,
     confirm: glib::WeakRef<Button>,
     chosen: Rc<Mutex<Option<(SwapQuote, SwapRequest)>>>,
+    /// Bumped whenever an input the offers were quoted against changes. Offer rows and quote
+    /// results carry the generation they were built under and are ignored once it moves on.
+    generation: Rc<Cell<u64>>,
+    /// Generation of the most recent quote request actually sent, so a result made stale by
+    /// an edit (rather than by a newer request) knows it may clear the "Asking…" notice.
+    requested: Rc<Cell<u64>>,
 }
 
 impl SwapGate {
@@ -125,7 +130,15 @@ impl SwapGate {
         }
     }
 
+    /// Fill the card for this quote before showing it. Filling it here rather than on
+    /// visibility matters: choosing a second offer while the card is already up emits no
+    /// visibility change, which used to leave the first offer's terms on screen.
     fn arm(&self, quote: SwapQuote, request: SwapRequest) {
+        if let (Some(custody_note), Some(summary)) =
+            (self.custody_note.upgrade(), self.summary.upgrade())
+        {
+            fill_review(&custody_note, &summary, &quote);
+        }
         *self.chosen.lock().unwrap() = Some((quote, request));
         self.rearm();
         if let Some(card) = self.review_card.upgrade() {
@@ -141,15 +154,82 @@ impl SwapGate {
         }
     }
 
+    /// The assets or amount changed, so every offer on screen was quoted for something else.
+    fn inputs_changed(&self) {
+        self.generation.set(self.generation.get().wrapping_add(1));
+        self.invalidate();
+        if let Some(offers_box) = self.offers_box.upgrade() {
+            offers_box.set_visible(false);
+        }
+    }
+
+    /// Start a quote request and return the ticket its offers must present to `is_current`.
+    fn begin(&self) -> u64 {
+        self.inputs_changed();
+        self.generation.get()
+    }
+
+    fn is_current(&self, ticket: u64) -> bool {
+        self.generation.get() == ticket
+    }
+
+    /// A request went stale because of an edit, and no newer request has replaced it, so
+    /// nothing is being asked any more.
+    fn abandon(&self, ticket: u64) {
+        if self.requested.get() == ticket {
+            if let Some(status) = self.status.upgrade() {
+                status.set_visible(false);
+            }
+        }
+    }
+
     fn watch_entry(&self, row: &adw::EntryRow) {
         let gate = self.clone();
-        row.connect_changed(move |_| gate.invalidate());
+        row.connect_changed(move |_| gate.inputs_changed());
     }
 
     fn watch_picker(&self, row: &ui::PickerRow) {
         let gate = self.clone();
-        row.connect_changed(move || gate.invalidate());
+        row.connect_changed(move || gate.inputs_changed());
     }
+}
+
+fn fill_review(custody_note: &gtk::Label, summary: &gtk::Label, quote: &SwapQuote) {
+    custody_note.set_label(quote.custody.describe());
+    custody_note.remove_css_class("testnet-note");
+    custody_note.remove_css_class("spend-warning");
+    custody_note.add_css_class(match quote.custody {
+        Custody::AtomicOnChain => "testnet-note",
+        Custody::ProtocolVault => "spend-warning",
+    });
+    // One "Swap fee" line carrying the whole cost, not one line per component.
+    //
+    // The venues that report a total already fold the affiliate cut into it, so showing the
+    // venue's fee and the wallet's separately would read as more being taken than actually
+    // is. The route note is a different thing again (which DEX, what price impact) and stays
+    // on its own line rather than being mistaken for a charge, which is what happened when
+    // both shared a field.
+    let swap_fee = swap::swap_fee_line(quote)
+        .map(|line| format!("\nSwap fee: {line}"))
+        .unwrap_or_default();
+    let route = quote
+        .route_note
+        .as_ref()
+        .map(|note| format!("\nRoute: {note}"))
+        .unwrap_or_default();
+    summary.set_label(&format!(
+        "Provider: {}\nYou send: {} {}\nYou receive at least: {} {}\nExpected: {} {}\nSettles to: {}{}{}",
+        quote.provider_name,
+        quote.amount_in_display(),
+        quote.from.symbol,
+        quote.min_out_display(),
+        quote.to.symbol,
+        quote.expected_out_display(),
+        quote.to.symbol,
+        ui::short_address(&quote.destination),
+        swap_fee,
+        route,
+    ));
 }
 
 /// One provider's offer, rendered as a selectable row.
@@ -303,9 +383,15 @@ pub fn trade_view(
 
     let gate = SwapGate {
         review_card: review_card.downgrade(),
+        custody_note: custody_note.downgrade(),
+        summary: summary.downgrade(),
+        offers_box: offers_box.downgrade(),
+        status: status.downgrade(),
         ack: ack.downgrade(),
         confirm: confirm.downgrade(),
         chosen: Rc::new(Mutex::new(None)),
+        generation: Rc::new(Cell::new(0)),
+        requested: Rc::new(Cell::new(0)),
     };
     gate.watch_entry(&amount);
     gate.watch_picker(&from_row);
@@ -333,7 +419,7 @@ pub fn trade_view(
         move |_| {
             error.set_visible(false);
             rejected.set_visible(false);
-            gate.invalidate();
+            let ticket = gate.begin();
 
             let Some((_, from)) = assets.get(from_row.selected() as usize).cloned() else { return };
             let Some((_, to)) = assets.get(to_row.selected() as usize).cloned() else { return };
@@ -394,6 +480,7 @@ pub fn trade_view(
             ui::set_notice_warning(&status, false);
             status.set_visible(true);
             offers_box.set_visible(false);
+            gate.requested.set(ticket);
 
             let (sender, receiver) = crate::configuration::ui_channel::unbounded();
             let for_thread = request.clone();
@@ -414,6 +501,10 @@ pub fn trade_view(
                     #[upgrade_or]
                     ControlFlow::Break,
                     move |set| {
+                        if !gate.is_current(ticket) {
+                            gate.abandon(ticket);
+                            return ControlFlow::Break;
+                        }
                         // Clear the previous offers by removing exactly the rows that were
                         // added, tracked in `shown`.
                         //
@@ -440,7 +531,9 @@ pub fn trade_view(
                                 let quote = quote.clone();
                                 let request = request.clone();
                                 row.connect_activated(move |_| {
-                                    gate.arm(quote.clone(), request.clone());
+                                    if gate.is_current(ticket) {
+                                        gate.arm(quote.clone(), request.clone());
+                                    }
                                 });
                                 offers.add(&row);
                             }
@@ -466,55 +559,6 @@ pub fn trade_view(
             );
         }
     ));
-
-    // ---- review card is populated when an offer is chosen ----
-    {
-        let chosen = gate.chosen.clone();
-        let summary = summary.clone();
-        let custody_note = custody_note.clone();
-        let review_card = review_card.clone();
-        review_card.connect_visible_notify(move |card| {
-            if !card.is_visible() {
-                return;
-            }
-            let Some((quote, _)) = chosen.lock().unwrap().clone() else { return };
-            custody_note.set_label(quote.custody.describe());
-            custody_note.remove_css_class("testnet-note");
-            custody_note.remove_css_class("spend-warning");
-            custody_note.add_css_class(match quote.custody {
-                Custody::AtomicOnChain => "testnet-note",
-                Custody::ProtocolVault => "spend-warning",
-            });
-            // One "Swap fee" line carrying the whole cost, not one line per component.
-            //
-            // The venues that report a total already fold the affiliate cut into it, so
-            // showing the venue's fee and the wallet's separately would read as more being
-            // taken than actually is. The route note is a different thing again (which DEX,
-            // what price impact) and stays on its own line rather than being mistaken for a
-            // charge, which is what happened when both shared a field.
-            let swap_fee = swap::swap_fee_line(&quote)
-                .map(|line| format!("\nSwap fee: {line}"))
-                .unwrap_or_default();
-            let route = quote
-                .route_note
-                .as_ref()
-                .map(|note| format!("\nRoute: {note}"))
-                .unwrap_or_default();
-            summary.set_label(&format!(
-                "Provider: {}\nYou send: {} {}\nYou receive at least: {} {}\nExpected: {} {}\nSettles to: {}{}{}",
-                quote.provider_name,
-                quote.amount_in_display(),
-                quote.from.symbol,
-                quote.min_out_display(),
-                quote.to.symbol,
-                quote.expected_out_display(),
-                quote.to.symbol,
-                ui::short_address(&quote.destination),
-                swap_fee,
-                route,
-            ));
-        });
-    }
 
     cancel.connect_clicked(clone!(
         #[strong] gate,

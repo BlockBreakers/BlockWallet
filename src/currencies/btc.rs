@@ -158,13 +158,18 @@ impl BitcoinWallet {
         Ok(wallet)
     }
 
-    pub fn sync_from_seed(
-        mnemonic: &str,
-        passphrase: &str,
-        network: &str,
-        btc_node: &str,
-    ) -> Result<btc_chain::BtcSyncState, block_error::Error> {
-        btc_chain::sync_account(mnemonic, passphrase, network, btc_node)
+    /// The phrase when the account has one, otherwise its imported WIF. `None` once locked.
+    pub fn signing_key(&self) -> Option<btc_chain::BtcKey> {
+        if let Some(mnemonic) = self.mnemonic.clone().filter(|value| !value.is_empty()) {
+            return Some(btc_chain::BtcKey::Seed {
+                mnemonic,
+                passphrase: self.password.clone().unwrap_or_default(),
+            });
+        }
+        self.private_key
+            .clone()
+            .filter(|value| !value.is_empty())
+            .map(btc_chain::BtcKey::Wif)
     }
 
     pub fn set_wallet_name(&mut self, name: String) {

@@ -680,10 +680,10 @@ fn erc20(symbol: &str, name: &str, address: &str, decimals: u8) -> RegistryToken
     }
 }
 
+/// Decided by address only. The symbol is not evidence: BNB Smart Chain's bundled list has an
+/// ERC-20 whose contract reports "ETH", and treating that as native would send BNB instead.
 pub fn is_native_token(token: &Token) -> bool {
-    token.symbol.eq_ignore_ascii_case("ETH")
-        || token.address.trim().eq_ignore_ascii_case(NATIVE_SENTINEL)
-        || token.address.trim().is_empty()
+    token.address.trim().eq_ignore_ascii_case(NATIVE_SENTINEL) || token.address.trim().is_empty()
 }
 
 pub fn validate_address(address: &str) -> Result<Address, block_error::Error> {
@@ -769,8 +769,11 @@ pub fn fee_from_tier(tiers: &FeeTiers, label: &str) -> (u128, u128) {
         _ => tiers.medium,
     };
     // Both bounded: the estimate is whatever the node said, and `max_fee_per_gas` multiplied
-    // by the gas limit is the ceiling on what this transaction can cost.
-    (clamp_gas_price(max_fee), clamp_gas_price(tiers.priority))
+    // by the gas limit is the ceiling on what this transaction can cost. The tip is also
+    // capped at the max fee, which nodes require; the Low tier scales only the max fee, so
+    // on a chain with a near-zero base fee the tip would otherwise exceed it.
+    let max_fee = clamp_gas_price(max_fee);
+    (max_fee, clamp_gas_price(tiers.priority).min(max_fee))
 }
 
 fn block_on<T>(fut: impl std::future::Future<Output = T>) -> Result<T, block_error::Error> {
@@ -1247,6 +1250,7 @@ async fn prepare_send_async(
     let native = is_native_token(&token);
     let nonce = provider
         .get_transaction_count(from)
+        .pending()
         .await
         .map_err(|e| block_error::Error::new(format!("could not read nonce: {e}")))?;
     let eth_balance = provider
@@ -1536,6 +1540,45 @@ pub fn send_contract_call(
     }
 }
 
+/// Block until `txid` is mined, failing if it reverted or is still unmined after `timeout`.
+///
+/// Read errors while polling are retried rather than returned: a flaky RPC is not evidence
+/// that the transaction failed.
+pub fn wait_for_success(
+    txid: &str,
+    eth_node: &str,
+    network_name: &str,
+    infura_key: &str,
+    timeout: std::time::Duration,
+) -> Result<(), block_error::Error> {
+    let network = parse_network(network_name);
+    let rpc = resolve_rpc(eth_node, network, infura_key);
+    let hash = B256::from_str(txid.trim())
+        .map_err(|_| block_error::Error::new(format!("invalid transaction hash {txid}")))?;
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        let status = block_on(async {
+            let provider = http_provider(&rpc).ok()?;
+            let receipt = provider.get_transaction_receipt(hash).await.ok()??;
+            Some(receipt.status())
+        })
+        .ok()
+        .flatten();
+        match status {
+            Some(true) => return Ok(()),
+            Some(false) => {
+                return Err(block_error::Error::new("it was mined but reverted".to_string()))
+            }
+            None if std::time::Instant::now() >= deadline => {
+                return Err(block_error::Error::new(
+                    "it has not been mined yet".to_string(),
+                ))
+            }
+            None => std::thread::sleep(std::time::Duration::from_secs(3)),
+        }
+    }
+}
+
 fn decode_hex_payload(data: &str) -> Result<Bytes, block_error::Error> {
     let text = data.trim();
     let stripped = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")).unwrap_or(text);
@@ -1558,8 +1601,11 @@ async fn send_contract_call_async(
 ) -> Result<String, block_error::Error> {
     let from = signer.address();
     let provider = signed_provider(&rpc, signer)?;
+    // `pending`, not the default `latest`: a transaction this wallet sent moments ago (the
+    // approval ahead of a swap) must count, or this one reuses its nonce and is rejected.
     let nonce = provider
         .get_transaction_count(from)
+        .pending()
         .await
         .map_err(|e| block_error::Error::new(format!("could not read nonce: {e}")))?;
     let tiers = fetch_fee_tiers_async(rpc.clone()).await.unwrap_or_default();
@@ -1864,13 +1910,39 @@ mod tests {
     #[test]
     fn fee_tiers_map_labels() {
         let tiers = FeeTiers {
-            low: 1,
-            medium: 2,
-            high: 3,
+            low: 10,
+            medium: 20,
+            high: 30,
             priority: 4,
         };
-        assert_eq!(fee_from_tier(&tiers, "low").0, 1);
-        assert_eq!(fee_from_tier(&tiers, "High").0, 3);
+        assert_eq!(fee_from_tier(&tiers, "low").0, 10);
+        assert_eq!(fee_from_tier(&tiers, "High").0, 30);
         assert_eq!(fee_from_tier(&tiers, "medium").1, 4);
+    }
+
+    #[test]
+    fn an_erc20_reporting_eth_is_not_the_native_token() {
+        let mut tokens = crate::currencies::tokens::Tokens { eth_tokens: Default::default(), token_transfers: Default::default() };
+        apply_bundled_tokens(&mut tokens, EthNetwork::BnbSmartChain);
+        let eth = tokens.eth_tokens.get("eth:ETH").expect("BSC bundles an ETH ERC-20");
+        assert!(!is_native_token(eth));
+        assert!(is_native_token(tokens.eth_tokens.get("eth:BNB").unwrap()));
+    }
+
+    #[test]
+    fn the_tip_never_exceeds_the_max_fee() {
+        // BNB Smart Chain: base fee 0, so the estimate's max fee equals its tip, and Low
+        // takes 80% of the max fee only.
+        let tiers = FeeTiers {
+            low: 800,
+            medium: 1_000,
+            high: 1_300,
+            priority: 1_000,
+        };
+        for label in ["low", "medium", "high"] {
+            let (max_fee, tip) = fee_from_tier(&tiers, label);
+            assert!(tip <= max_fee, "{label}: tip {tip} > max fee {max_fee}");
+        }
+        assert_eq!(fee_from_tier(&tiers, "low"), (800, 800));
     }
 }
